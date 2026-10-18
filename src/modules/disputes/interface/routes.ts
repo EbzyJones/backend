@@ -76,7 +76,7 @@ export function createDisputeRoutes(
       { schema: { params: disputeIdParamsSchema, response: { 200: getDisputeResponseSchema } } },
       async (request, reply) => {
         const result = await useCases.getDispute({
-          chainDeliveryId: BigInt(request.params.chainDeliveryId),
+          chainDeliveryId: request.params.chainDeliveryId,
         });
         void reply.status(200).send(ok(serializeDispute(result)));
       },
@@ -95,7 +95,7 @@ export function createDisputeRoutes(
       },
       async (request, reply) => {
         const { evidence } = await useCases.uploadEvidence({
-          chainDeliveryId: BigInt(request.params.chainDeliveryId),
+          chainDeliveryId: request.params.chainDeliveryId,
           contentType: request.body.contentType,
           uploadedBy: request.body.uploadedBy,
           bytes: Buffer.from(request.body.base64Content, 'base64'),

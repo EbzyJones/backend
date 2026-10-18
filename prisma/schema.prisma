@@ -188,22 +188,22 @@ model WalletAddress {
 // ─────────────────────────────────────────────────────────────────────────
 
 model Delivery {
-  id                String         @id @default(uuid())
-  chainDeliveryId   BigInt         @unique @map("chain_delivery_id")
-  senderAddress     String         @map("sender_address")
-  recipientAddress  String         @map("recipient_address") @db.VarChar(56)
-  driverAddress     String?        @map("driver_address")
-  status            DeliveryStatus @default(PENDING)
-  origin            String
-  destination       String
-  cargoCategory     CargoCategory  @map("cargo_category")
-  weightGrams       Int            @map("weight_grams")
-  fragile           Boolean        @default(false)
-  createdAtChain    DateTime       @map("created_at_chain")
-  transitStartedAt  DateTime?      @map("transit_started_at")
-  deliveredAt       DateTime?      @map("delivered_at")
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
+  id               String         @id @default(uuid())
+  chainDeliveryId  BigInt         @unique @map("chain_delivery_id")
+  senderAddress    String         @map("sender_address")
+  recipientAddress String         @map("recipient_address") @db.VarChar(56)
+  driverAddress    String?        @map("driver_address")
+  status           DeliveryStatus @default(PENDING)
+  origin           String
+  destination      String
+  cargoCategory    CargoCategory  @map("cargo_category")
+  weightGrams      Int            @map("weight_grams")
+  fragile          Boolean        @default(false)
+  createdAtChain   DateTime       @map("created_at_chain")
+  transitStartedAt DateTime?      @map("transit_started_at")
+  deliveredAt      DateTime?      @map("delivered_at")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
 
   escrow  Escrow?
   dispute Dispute?
@@ -223,29 +223,29 @@ model Delivery {
 }
 
 model Escrow {
-  id              String       @id @default(uuid())
-  chainDeliveryId BigInt       @unique @map("chain_delivery_id")
+  id               String       @id @default(uuid())
+  chainDeliveryId  BigInt       @unique @map("chain_delivery_id")
   /// escrow_contract's own EscrowRecord carries its own sender/recipient/
   /// driver, independent of delivery_contract's record — create_escrow's
   /// caller supplies these directly, so they are not assumed to always
   /// match the related Delivery row (PHASE_1_DOMAIN_ANALYSIS.md §3).
-  senderAddress    String    @map("sender_address")
-  recipientAddress String    @map("recipient_address") @db.VarChar(56)
-  driverAddress    String    @map("driver_address")
-  token           String
+  senderAddress    String       @map("sender_address")
+  recipientAddress String       @map("recipient_address") @db.VarChar(56)
+  driverAddress    String       @map("driver_address")
+  token            String
   /// Decimal(39, 0): i128::MAX (170141183460469231731687303715884105727) has
   /// 39 digits — Decimal(38, 0) tops out at 38 nines, one digit short of the
   /// full i128 range, so it must be 39 here to store any valid i128 exactly.
-  amount          Decimal      @db.Decimal(39, 0)
-  platformFee     Decimal?     @map("platform_fee") @db.Decimal(39, 0)
-  status          EscrowStatus @default(LOCKED)
-  disputedBy      String?      @map("disputed_by") @db.VarChar(56)
-  disputedAt      DateTime?    @map("disputed_at")
-  releasedAt      DateTime?    @map("released_at")
-  refundedAt      DateTime?    @map("refunded_at")
-  createdAtChain  DateTime     @map("created_at_chain")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
+  amount           Decimal      @db.Decimal(39, 0)
+  platformFee      Decimal?     @map("platform_fee") @db.Decimal(39, 0)
+  status           EscrowStatus @default(LOCKED)
+  disputedBy       String?      @map("disputed_by") @db.VarChar(56)
+  disputedAt       DateTime?    @map("disputed_at")
+  releasedAt       DateTime?    @map("released_at")
+  refundedAt       DateTime?    @map("refunded_at")
+  createdAtChain   DateTime     @map("created_at_chain")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
 
   delivery Delivery @relation(fields: [chainDeliveryId], references: [chainDeliveryId])
 
@@ -253,6 +253,8 @@ model Escrow {
   /// (`status = 'RELEASED'`, grouped by `token`) — see
   /// `src/modules/analytics/infrastructure/prisma-analytics-reader.ts`.
   @@index([status, token])
+  @@index([senderAddress])
+  @@index([recipientAddress])
   @@map("escrows")
 }
 
@@ -285,9 +287,9 @@ model Dispute {
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
-  delivery Delivery  @relation(fields: [chainDeliveryId], references: [chainDeliveryId])
+  delivery Delivery   @relation(fields: [chainDeliveryId], references: [chainDeliveryId])
   evidence Evidence[]
-  raiser   User?     @relation(fields: [raisedByUserId], references: [id], onDelete: SetNull)
+  raiser   User?      @relation(fields: [raisedByUserId], references: [id], onDelete: SetNull)
 
   @@index([raisedByUserId])
   @@index([status, raisedAt, chainDeliveryId])
@@ -298,12 +300,12 @@ model Dispute {
 /// .add_evidence_hash); the file itself lives in object storage here, and
 /// must be verified against `hash` before being trusted (PHASE_1 §5, §12).
 model Evidence {
-  id           String   @id @default(uuid())
-  disputeId    String   @map("dispute_id")
-  hash         String
-  storageUrl   String   @map("storage_url")
-  contentType  String   @map("content_type")
-  uploadedBy   String   @map("uploaded_by")
+  id               String   @id @default(uuid())
+  disputeId        String   @map("dispute_id")
+  hash             String
+  storageUrl       String   @map("storage_url")
+  contentType      String   @map("content_type")
+  uploadedBy       String   @map("uploaded_by")
   /// The authenticated uploader's own account id, captured once at upload
   /// time (security issue: wallet-relink evidence authorization) — the
   /// stable identity `downloadEvidence` authorizes the uploader-access
@@ -313,8 +315,8 @@ model Evidence {
   /// optional-actor-id shape as `AuditLog.actorId` (this column didn't
   /// exist before this fix, so every row created earlier has it `null` —
   /// see `downloadEvidence`'s doc comment for that legacy fallback).
-  uploadedByUserId String? @map("uploaded_by_user_id")
-  createdAt    DateTime @default(now()) @map("created_at")
+  uploadedByUserId String?  @map("uploaded_by_user_id")
+  createdAt        DateTime @default(now()) @map("created_at")
 
   dispute  Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
   uploader User?   @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
@@ -424,7 +426,7 @@ model ActorActivity {
 
 model BlockchainCheckpoint {
   id            String   @id @default(uuid())
-  contractName  String   @db.VarChar(255) @map("contract_name")
+  contractName  String   @map("contract_name") @db.VarChar(255)
   network       String
   lastLedgerSeq BigInt   @default(0) @map("last_ledger_seq")
   updatedAt     DateTime @updatedAt @map("updated_at")
@@ -434,23 +436,23 @@ model BlockchainCheckpoint {
 }
 
 model BlockchainEvent {
-  id           String    @id @default(uuid())
-  contractName String    @db.VarChar(255) @map("contract_name")
-  network      String
+  id             String    @id @default(uuid())
+  contractName   String    @map("contract_name") @db.VarChar(255)
+  network        String
   /// The Soroban RPC's own event id (a monotonic "total order id" encoding
   /// ledger/tx/operation/event position) — already globally unique on the
   /// network, so it's the idempotency key directly rather than a hand-rolled
   /// composite. See src/modules/indexer/infrastructure/soroban-event-source.ts.
-  rpcEventId    String    @map("rpc_event_id")
-  ledgerSeq     BigInt    @map("ledger_seq")
-  txHash        String    @map("tx_hash")
-  topic         String[]
-  payload       Json
+  rpcEventId     String    @map("rpc_event_id")
+  ledgerSeq      BigInt    @map("ledger_seq")
+  txHash         String    @map("tx_hash")
+  topic          String[]
+  payload        Json
   /// When this happened on-chain (ledger close time) — distinct from
   /// ingestedAt, which is when this backend observed/stored it.
-  ledgerClosedAt DateTime @map("ledger_closed_at")
-  ingestedAt    DateTime  @default(now()) @map("ingested_at")
-  processedAt   DateTime? @map("processed_at")
+  ledgerClosedAt DateTime  @map("ledger_closed_at")
+  ingestedAt     DateTime  @default(now()) @map("ingested_at")
+  processedAt    DateTime? @map("processed_at")
 
   @@unique([contractName, network, rpcEventId])
   @@index([contractName, ledgerSeq])

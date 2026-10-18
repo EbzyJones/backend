@@ -2,6 +2,7 @@ export type { ChainEscrowRecord, Escrow, EscrowStatus } from './entities.js';
 export type {
   EscrowStatusPatch,
   EscrowRepository,
+  EscrowSecondaryOperation,
   EscrowContractReader,
   EscrowTransactionBuilder,
   CreateEscrowTxInput,

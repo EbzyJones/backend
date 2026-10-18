@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authenticate } from './auth-guard.js';
 import { signAccessToken } from '../../jwt/index.js';
 import { getPrismaClient } from '../../database/index.js';
-import { UnauthorizedError } from '../../errors/index.js';
+import { AppError, UnauthorizedError, handleError } from '../../errors/index.js';
+import Fastify from 'fastify';
 
 /**
  * Unit coverage for `authenticate`'s DB-backed `tokenVersion` check
@@ -50,7 +51,7 @@ describe('authenticate — tokenVersion check', () => {
     expect(request.user).toBeUndefined();
   });
 
-  it('trusts the freshly-read DB role over the token\'s own (potentially stale) role claim', async () => {
+  it("trusts the freshly-read DB role over the token's own (potentially stale) role claim", async () => {
     // Same tokenVersion (so the token isn't rejected outright), but the DB
     // role has since changed — defense in depth: role must never be taken
     // from the token when a fresh DB read is already available.
@@ -93,5 +94,76 @@ describe('authenticate — tokenVersion check', () => {
 
     await expect(authenticate(request, fakeReply)).rejects.toBeInstanceOf(UnauthorizedError);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('authenticate — consistent AppError mapping (#297)', () => {
+  it('throws an AppError subclass (UnauthorizedError) when Authorization header is missing', async () => {
+    const request = fakeRequest();
+    let thrownError: unknown;
+
+    try {
+      await authenticate(request, fakeReply);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AppError);
+    expect(thrownError).toBeInstanceOf(UnauthorizedError);
+    expect((thrownError as AppError).statusCode).toBe(401);
+    expect((thrownError as AppError).code).toBe('UNAUTHORIZED');
+  });
+
+  it('throws an AppError subclass when Authorization header does not start with Bearer', async () => {
+    const request = fakeRequest('Basic dXNlcjpwYXNz');
+    let thrownError: unknown;
+
+    try {
+      await authenticate(request, fakeReply);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AppError);
+    expect(thrownError).toBeInstanceOf(UnauthorizedError);
+    expect((thrownError as AppError).statusCode).toBe(401);
+    expect((thrownError as AppError).code).toBe('UNAUTHORIZED');
+  });
+
+  it('throws an AppError subclass when token is invalid or expired', async () => {
+    const request = fakeRequest('Bearer invalid-token');
+    let thrownError: unknown;
+
+    try {
+      await authenticate(request, fakeReply);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeInstanceOf(AppError);
+    expect(thrownError).toBeInstanceOf(UnauthorizedError);
+    expect((thrownError as AppError).statusCode).toBe(401);
+    expect((thrownError as AppError).code).toBe('UNAUTHORIZED');
+  });
+
+  it('maps missing token errors to standard ErrorResponseBody format in Fastify', async () => {
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.get('/protected', { preHandler: authenticate }, async (_req, reply) => {
+      void reply.send({ success: true });
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/protected' });
+    await app.close();
+
+    expect(response.statusCode).toBe(401);
+    const body = response.json();
+    expect(body).toEqual({
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Missing or malformed Authorization header',
+      },
+      requestId: expect.any(String),
+    });
   });
 });

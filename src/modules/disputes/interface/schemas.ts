@@ -58,7 +58,19 @@ const disputeDto = z.object({
   evidence: z.array(evidenceDto),
 });
 
-export const disputeIdParamsSchema = z.object({ chainDeliveryId });
+export const disputeIdParamsSchema = z.object({
+  chainDeliveryId: chainDeliveryId.transform((val, ctx) => {
+    try {
+      return BigInt(val);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid chain delivery ID',
+      });
+      return z.NEVER;
+    }
+  }),
+});
 export const getDisputeResponseSchema = z.object({ data: disputeDto });
 
 export const raiseDisputeBodySchema = z.object({
