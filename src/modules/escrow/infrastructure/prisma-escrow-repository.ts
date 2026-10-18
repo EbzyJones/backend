@@ -18,6 +18,7 @@ function toDomain(record: PrismaEscrow): Escrow {
     releasedAt: record.releasedAt,
     refundedAt: record.refundedAt,
     createdAtChain: record.createdAtChain,
+    isVerified: record.isVerified,
   };
 }
 
@@ -41,6 +42,7 @@ export function createPrismaEscrowRepository(prisma: PrismaClient): EscrowReposi
           disputedBy: record.disputedBy,
           disputedAt: record.disputedAt,
           createdAtChain: record.createdAtChain,
+          ...(record.isVerified !== undefined && { isVerified: record.isVerified }),
         },
       });
       return toDomain(created);

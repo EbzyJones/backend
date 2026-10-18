@@ -1,3 +1,4 @@
+import './shared/serialization/bigint.js';
 import Fastify from 'fastify';
 import {
   serializerCompiler,
@@ -49,6 +50,17 @@ export async function buildApp() {
     trustProxy: true,
     bodyLimit: config.EVIDENCE_MAX_BYTES,
   }).withTypeProvider<ZodTypeProvider>();
+
+  // Ensure native BigInt values serialize cleanly to strings across all Fastify JSON responses
+  if (!('toJSON' in BigInt.prototype)) {
+    Object.defineProperty(BigInt.prototype, 'toJSON', {
+      value: function (this: bigint) {
+        return this.toString();
+      },
+      writable: true,
+      configurable: true,
+    });
+  }
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);

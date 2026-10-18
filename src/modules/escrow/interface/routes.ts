@@ -74,7 +74,7 @@ export function createEscrowRoutes(useCases: EscrowUseCases): FastifyPluginAsync
     app.post(
       '/transactions/build/release-escrow',
       {
-        preHandler: authenticate,
+        onRequest: authenticate,
         schema: {
           security: [{ bearerAuth: [] }],
           body: releaseEscrowBodySchema,
@@ -93,7 +93,7 @@ export function createEscrowRoutes(useCases: EscrowUseCases): FastifyPluginAsync
     app.post(
       '/transactions/build/refund-escrow',
       {
-        preHandler: authenticate,
+        onRequest: authenticate,
         schema: {
           security: [{ bearerAuth: [] }],
           body: refundEscrowBodySchema,

@@ -101,6 +101,29 @@ describe.skipIf(!dbAvailable)('Prisma analytics reader (integration)', () => {
     });
   });
 
+  it('getGmvByToken excludes unverified released escrows from GMV totals', async () => {
+    const unverifiedDelivery = await seedDelivery('DELIVERED');
+    const rogueToken = `ROGUE-${unverifiedDelivery}`;
+
+    await prisma.escrow.create({
+      data: {
+        chainDeliveryId: unverifiedDelivery,
+        senderAddress: Keypair.random().publicKey(),
+        recipientAddress: Keypair.random().publicKey(),
+        driverAddress: Keypair.random().publicKey(),
+        token: rogueToken,
+        amount: '5000000',
+        status: 'RELEASED',
+        isVerified: false,
+        createdAtChain: new Date(),
+      },
+    });
+
+    const rows = await analyticsReader.getGmvByToken();
+    const rogueRow = rows.find((r) => r.token === rogueToken);
+    expect(rogueRow).toBeUndefined();
+  });
+
   it('getDeliveryFunnelCounts counts total/delivered from deliveries and disputed from disputes', async () => {
     const before = await analyticsReader.getDeliveryFunnelCounts();
 

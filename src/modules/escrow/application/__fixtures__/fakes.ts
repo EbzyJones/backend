@@ -28,6 +28,7 @@ export function createInMemoryEscrowRepository(): EscrowRepository & {
         platformFee: null,
         releasedAt: null,
         refundedAt: null,
+        isVerified: record.isVerified ?? true,
       };
       escrows.set(key(escrow.chainDeliveryId), escrow);
       return escrow;
@@ -95,6 +96,7 @@ export function buildEscrow(overrides: Partial<Escrow> = {}): Escrow {
     platformFee: null,
     releasedAt: null,
     refundedAt: null,
+    isVerified: true,
     ...overrides,
   };
 }

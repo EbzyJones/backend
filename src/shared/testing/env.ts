@@ -15,3 +15,5 @@ process.env.DATABASE_URL ??=
 process.env.REDIS_URL ??= 'redis://localhost:6379';
 process.env.JWT_ACCESS_SECRET ??= 'test-only-access-secret-not-for-production-use-0000';
 process.env.JWT_REFRESH_SECRET ??= 'test-only-refresh-secret-not-for-production-use-0000';
+
+import '../serialization/bigint.js';
