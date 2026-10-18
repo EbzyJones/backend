@@ -37,7 +37,7 @@ All configuration is environment variables, validated at boot by `src/shared/con
 
 Contract IDs (`ESCROW_CONTRACT_ID`, etc.) and network settings (`STELLAR_NETWORK`, `SOROBAN_RPC_URL`, `STELLAR_NETWORK_PASSPHRASE`) must match the actual deployed `FaniLab-SmartContract` instance for the target environment — cross-check against that repository's deployment output before promoting to a new network.
 
-`MAIL_PROVIDER`/`NOTIFICATION_PROVIDER` default to `logger` — a genuinely functional dev/test default that logs mail instead of sending it (see `docs/AUTHENTICATION.md` § Dev email delivery). Booting with `NODE_ENV=production` while either is left at `logger` fails at startup with a clear error; a real provider must be wired into `select-mailer.ts`/`select-notification-sender.ts` before a production deployment.
+`MAIL_PROVIDER`/`NOTIFICATION_PROVIDER` default to `logger` — a genuinely functional dev/test default that logs mail instead of sending it (see `docs/AUTHENTICATION.md` § Dev email delivery). Booting with `NODE_ENV=production` while either is left at `logger` fails at startup with a clear error; set either to `smtp`, `sendgrid`, or `ses` and configure the shared SMTP relay (`SMTP_HOST` + `SMTP_FROM` required at parse time, `SMTP_PORT` defaults to 587, `SMTP_USER`/`SMTP_PASSWORD` must be set together when the relay needs AUTH, `SMTP_TLS_CA_PATH` for a private CA) — all three providers deliver through the same client (`src/shared/smtp/smtp-client.ts`) selected by `select-mailer.ts`/`select-notification-sender.ts`.
 
 ## Health Checks
 

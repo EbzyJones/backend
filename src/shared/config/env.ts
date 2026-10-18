@@ -106,10 +106,28 @@ const baseEnvSchema = z.object({
    * real mail and is deliberately refused when NODE_ENV=production (see
    * select-mailer.ts / select-notification-sender.ts): a production
    * deployment with no real provider configured should fail loudly at boot,
-   * not silently send no mail. No real provider is wired up yet — set this
-   * once one exists. */
-  MAIL_PROVIDER: z.enum(['logger']).default('logger'),
-  NOTIFICATION_PROVIDER: z.enum(['logger']).default('logger'),
+   * not silently send no mail. `smtp`, `sendgrid`, and `ses` all deliver
+   * over the same SMTP relay configured by the SMTP_* variables below
+   * (SendGrid: smtp.sendgrid.net with user "apikey"; SES:
+   * email-smtp.<region>.amazonaws.com; `smtp`: any RFC 5321 relay) — see
+   * src/shared/smtp/smtp-client.ts. Selecting any of them requires
+   * SMTP_HOST and SMTP_FROM, enforced at parse time by the refinement
+   * below so a misconfiguration fails at boot, not at first send. */
+  MAIL_PROVIDER: z.enum(['logger', 'smtp', 'sendgrid', 'ses']).default('logger'),
+  NOTIFICATION_PROVIDER: z.enum(['logger', 'smtp', 'sendgrid', 'ses']).default('logger'),
+
+  /** SMTP relay settings used whenever MAIL_PROVIDER or NOTIFICATION_PROVIDER
+   * is not `logger`. SMTP_USER/SMTP_PASSWORD are optional: some relays
+   * (local dev relay, platform-internal relay) authenticate implicitly —
+   * when either is set, both must be, and AUTH is attempted. SMTP_TLS_CA_PATH
+   * points at a PEM CA bundle for relays whose certificate chains to a
+   * private CA rather than a public one. */
+  SMTP_HOST: z.string().min(1).optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  SMTP_FROM: z.string().min(1).optional(),
+  SMTP_TLS_CA_PATH: z.string().min(1).optional(),
 
   /** How long `actor_activities` rows are kept before the scheduled cleanup
    * job deletes them (src/modules/fraud-detection/infrastructure/cleanup-
@@ -126,13 +144,44 @@ const baseEnvSchema = z.object({
 });
 
 /**
+ * A non-logger provider with no relay configured would otherwise only fail at
+ * first send — long after boot, deep inside a request or a queued BullMQ job.
+ * Failing here keeps the same fail-fast-at-boot contract the required
+ * connection strings above already establish (see docs/DEPLOYMENT.md).
+ */
+const envWithProviderChecks = baseEnvSchema.superRefine((env, ctx) => {
+  const providers: Array<[string, 'logger' | 'smtp' | 'sendgrid' | 'ses']> = [
+    ['MAIL_PROVIDER', env.MAIL_PROVIDER],
+    ['NOTIFICATION_PROVIDER', env.NOTIFICATION_PROVIDER],
+  ];
+  for (const [key, provider] of providers) {
+    if (provider === 'logger') continue;
+    const missing = (['SMTP_HOST', 'SMTP_FROM'] as const).filter((name) => !env[name]);
+    if (missing.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key}=${provider} requires ${missing.join(' and ')} to be set (the SMTP relay this provider delivers through)`,
+      });
+    }
+    if (Boolean(env.SMTP_USER) !== Boolean(env.SMTP_PASSWORD)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key}=${provider} requires SMTP_USER and SMTP_PASSWORD to be set together (or both unset for a relay that needs no AUTH)`,
+      });
+    }
+  }
+});
+
+/**
  * `LOG_LEVEL`'s effective default depends on `NODE_ENV`: tests should be
  * quiet unless a level is explicitly requested, everything else defaults to
  * `info`. Expressing that here — the single source of truth for config —
  * means src/shared/logger/index.ts can trust `getConfig().LOG_LEVEL` as-is
  * instead of re-reading `process.env` itself and bypassing validation.
  */
-const envSchema = baseEnvSchema.transform((env) => ({
+const envSchema = envWithProviderChecks.transform((env) => ({
   ...env,
   LOG_LEVEL: env.LOG_LEVEL ?? (env.NODE_ENV === 'test' ? ('silent' as const) : ('info' as const)),
 }));

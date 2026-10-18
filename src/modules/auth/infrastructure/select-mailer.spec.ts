@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import { parseEnv } from '../../../shared/config/env.js';
+import { smtpSettingsFromEnv, type SmtpSettings } from '../../../shared/smtp/index.js';
 import { selectMailer } from './select-mailer.js';
+
+const smtpSettings: SmtpSettings = {
+  host: 'smtp.example.com',
+  port: 587,
+  user: 'apikey',
+  password: 'secret',
+  from: 'FaniLab <no-reply@example.com>',
+};
+
+const productionEnv = {
+  DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+  REDIS_URL: 'redis://localhost:6379',
+  JWT_ACCESS_SECRET: 'a'.repeat(32),
+  JWT_REFRESH_SECRET: 'b'.repeat(32),
+  NODE_ENV: 'production',
+  MAIL_PROVIDER: 'smtp',
+  SMTP_HOST: 'smtp.example.com',
+  SMTP_FROM: 'FaniLab <no-reply@example.com>',
+} as NodeJS.ProcessEnv;
 
 describe('selectMailer', () => {
   it('returns the logger mailer in development', () => {
@@ -14,5 +35,26 @@ describe('selectMailer', () => {
 
   it('throws a clear configuration error for logger in production', () => {
     expect(() => selectMailer('production', 'logger')).toThrow(/NODE_ENV=production/);
+  });
+
+  it('initializes successfully in production for every real provider (issue #374)', () => {
+    for (const provider of ['smtp', 'sendgrid', 'ses'] as const) {
+      const mailer = selectMailer('production', provider, smtpSettings);
+      expect(mailer.sendVerificationEmail).toBeTypeOf('function');
+      expect(mailer.sendPasswordResetEmail).toBeTypeOf('function');
+    }
+  });
+
+  it('boots a production configuration end to end: parseEnv → settings → selector', () => {
+    const env = parseEnv(productionEnv);
+    const mailer = selectMailer(env.NODE_ENV, env.MAIL_PROVIDER, smtpSettingsFromEnv(env));
+    expect(mailer.sendVerificationEmail).toBeTypeOf('function');
+  });
+
+  it('throws a clear configuration error when a real provider has no SMTP settings', () => {
+    expect(() => selectMailer('production', 'smtp')).toThrow(/SMTP_HOST and SMTP_FROM/);
+    expect(() => selectMailer('development', 'ses', undefined)).toThrow(
+      /MAIL_PROVIDER=ses requires SMTP relay settings/,
+    );
   });
 });
