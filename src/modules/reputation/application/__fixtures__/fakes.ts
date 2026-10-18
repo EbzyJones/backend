@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
   ChainDriverProfile,
@@ -83,7 +84,7 @@ export function createFakeReputationTransactionBuilder(): ReputationTransactionB
 export function buildDriverProfile(overrides: Partial<DriverProfile> = {}): DriverProfile {
   return {
     id: randomUUID(),
-    address: 'GDRIVER',
+    address: testAddress('driver'),
     reputationScore: 50,
     tier: 'SILVER',
     kycVerified: false,
@@ -98,7 +99,7 @@ export function buildChainDriverProfile(
   overrides: Partial<ChainDriverProfile> = {},
 ): ChainDriverProfile {
   return {
-    address: 'GDRIVER',
+    address: testAddress('driver'),
     reputationScore: 50,
     deliveriesCompleted: 0,
     kycVerified: false,
@@ -117,7 +118,7 @@ export function buildReputationEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['driver_registered'],
-    payload: ['GDRIVER'],
+    payload: [testAddress('driver')],
     closedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
