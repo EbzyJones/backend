@@ -38,13 +38,17 @@ export function parseAddress(value: unknown): string | null {
 /**
  * Parse a payload element that encodes an unsigned on-chain id (delivery id,
  * fleet id, ...) as either a decimal string or a JS number. Anything else —
- * including a value `BigInt()` would throw on — yields `null` so the caller
- * can treat the event as malformed rather than crashing the indexer.
+ * including a value `BigInt()` would throw on, a negative number or negative
+ * numeric string (on-chain ids are strictly unsigned u64/u32, and downstream
+ * XDR encoders like `u64ToScVal` require non-negative bigints), or a
+ * non-integer such as 1.5 — yields `null` so the caller can treat the event
+ * as malformed rather than crashing the indexer or persisting a negative id.
  */
 export function parseBigIntId(value: unknown): bigint | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   try {
-    return BigInt(value);
+    const id = BigInt(value);
+    return id >= 0n ? id : null;
   } catch {
     return null;
   }
