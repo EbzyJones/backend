@@ -63,6 +63,12 @@ async function main(): Promise<void> {
   const { buildApp } = await import('./app.js');
   const app = await buildApp();
 
+  // `close-with-grace` listens for SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGTRAP,
+  // SIGABRT, SIGBUS, SIGFPE, SIGSEGV, SIGUSR2, and SIGTERM by default — no
+  // `skip` list is passed here precisely so SIGUSR2 (emitted by nodemon /
+  // `tsx --watch` on dev reloads, #359) triggers the same graceful teardown
+  // (Prisma `$disconnect`, Redis/queue `quit`) as SIGINT/SIGTERM instead of
+  // killing the process with dangling connections.
   closeWithGrace({ delay: SHUTDOWN_TIMEOUT_MS }, async ({ err }: { err?: Error }) => {
     // Everything below is best-effort teardown: each step is attempted sequentially
     // with individual timeouts even if an earlier one hangs or throws (e.g. an

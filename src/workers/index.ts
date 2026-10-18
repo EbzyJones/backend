@@ -53,6 +53,12 @@ async function main(): Promise<void> {
     void writeHeartbeat();
   }, HEARTBEAT_INTERVAL_MS);
 
+  // `close-with-grace` listens for SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGTRAP,
+  // SIGABRT, SIGBUS, SIGFPE, SIGSEGV, SIGUSR2, and SIGTERM by default — no
+  // `skip` list is passed here precisely so SIGUSR2 (emitted by nodemon /
+  // `tsx --watch` on dev reloads, #359) triggers the same graceful teardown
+  // (worker close, Prisma `$disconnect`, Redis/queue `quit`) as
+  // SIGINT/SIGTERM instead of killing the process with dangling connections.
   closeWithGrace({ delay: 10_000 }, async ({ err }: { err?: Error }) => {
     clearInterval(heartbeatTimer);
     if (err) {
