@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   onBlockchainEvent,
   publishBlockchainEvent,
+  subscribeBlockchainEventHandler,
   type BlockchainEventEnvelope,
 } from './index.js';
+import { eventSubscriberErrorsTotal, registry } from '../metrics/index.js';
+import type { Logger } from '../logger/index.js';
 
 function buildEvent(overrides: Partial<BlockchainEventEnvelope> = {}): BlockchainEventEnvelope {
   return {
@@ -93,5 +96,57 @@ describe('blockchain event bus', () => {
 
     publishBlockchainEvent(buildEvent());
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('increments event_subscriber_errors_total when a registered handler throws', async () => {
+    const log = { error: vi.fn() } as unknown as Logger;
+    const errorMessage = 'spec: handler failed';
+    cleanup.push(
+      subscribeBlockchainEventHandler(
+        async () => {
+          throw new Error('DB down');
+        },
+        log,
+        errorMessage,
+      ),
+    );
+
+    publishBlockchainEvent(buildEvent({ rpcEventId: 'metric-1' }));
+    // The wrapper's .catch runs on a microtask — flush before asserting.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const metric = await eventSubscriberErrorsTotal.get();
+    const series = metric.values.find(
+      (value) =>
+        value.labels.subscriber === errorMessage &&
+        value.labels.contract === 'escrow' &&
+        value.labels.event === 'something_happened',
+    );
+    expect(series?.value).toBe(1);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      errorMessage,
+    );
+  });
+
+  it('leaves event_subscriber_errors_total untouched when a handler succeeds', async () => {
+    const log = { error: vi.fn() } as unknown as Logger;
+    const errorMessage = 'spec: handler succeeded';
+    cleanup.push(subscribeBlockchainEventHandler(async () => 'ok', log, errorMessage));
+
+    publishBlockchainEvent(buildEvent({ rpcEventId: 'metric-2' }));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const metric = await eventSubscriberErrorsTotal.get();
+    const series = metric.values.find((value) => value.labels.subscriber === errorMessage);
+    expect(series).toBeUndefined();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('registers event_subscriber_errors_total for the /metrics endpoint to export', async () => {
+    expect(registry.getSingleMetric('event_subscriber_errors_total')).toBeDefined();
+    expect(await registry.metrics()).toContain('# HELP event_subscriber_errors_total');
+    expect(await registry.metrics()).toContain('# TYPE event_subscriber_errors_total counter');
   });
 });

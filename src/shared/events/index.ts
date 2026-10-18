@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { eventSubscriberErrorsTotal } from '../metrics/index.js';
 import type { Logger } from '../logger/index.js';
 
 export { parseAddress, parseBigIntId } from './parse.js';
@@ -51,6 +52,10 @@ export function onBlockchainEvent(handler: (event: BlockchainEventEnvelope) => v
  * rejection must be caught here rather than becoming an unhandled promise
  * rejection — one malformed/unexpected event must not crash the process or
  * block subsequent events (docs/EVENT_INDEXER.md's malformed-event handling).
+ * Besides logging, the catch block increments
+ * `event_subscriber_errors_total` — without that counter a failing handler
+ * silently let the read model drift from on-chain state with nothing for
+ * Prometheus/Grafana to alert on (docs/OBSERVABILITY.md § Metrics).
  */
 export function subscribeBlockchainEventHandler(
   handler: (event: BlockchainEventEnvelope) => Promise<unknown>,
@@ -59,6 +64,11 @@ export function subscribeBlockchainEventHandler(
 ): () => void {
   return onBlockchainEvent((event) => {
     handler(event).catch((error: unknown) => {
+      eventSubscriberErrorsTotal.inc({
+        contract: event.contractName,
+        event: event.topic[0] ?? 'unknown',
+        subscriber: errorMessage,
+      });
       log.error({ err: error, event }, errorMessage);
     });
   });
