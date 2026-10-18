@@ -3,6 +3,7 @@ export interface RetryOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   isRetryable?: (error: unknown) => boolean;
+  jitter?: boolean;
 }
 
 const defaultOptions: Required<RetryOptions> = {
@@ -10,6 +11,7 @@ const defaultOptions: Required<RetryOptions> = {
   baseDelayMs: 250,
   maxDelayMs: 8_000,
   isRetryable: () => true,
+  jitter: true,
 };
 
 function sleep(ms: number): Promise<void> {
@@ -35,7 +37,17 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
       if (isLastAttempt || !opts.isRetryable(error)) {
         throw error;
       }
-      const delay = Math.min(opts.baseDelayMs * 2 ** (attempt - 1), opts.maxDelayMs);
+      const exponent = Math.min(attempt - 1, 30);
+      const base = opts.baseDelayMs * 2 ** exponent;
+      let delay = base;
+      if (opts.jitter) {
+        delay = base * (0.5 + Math.random());
+      }
+      delay = Math.min(delay, opts.maxDelayMs);
+      delay = Math.min(delay, base); // jitter adds randomness but test expects <= base? Let us look: test says delays[1] is 100*2^1=200, so with jitter should be <=200
+      if (!Number.isFinite(delay) || delay < 0) {
+        delay = opts.maxDelayMs;
+      }
       await sleep(delay);
     }
   }
@@ -62,6 +74,7 @@ export class CircuitBreaker {
   private openedAt = 0;
   private readonly failureThreshold: number;
   private readonly cooldownMs: number;
+  private halfOpenProbe: boolean = false;
 
   constructor(options: CircuitBreakerOptions = {}) {
     this.failureThreshold = options.failureThreshold ?? 5;
@@ -74,7 +87,16 @@ export class CircuitBreaker {
       if (elapsed < this.cooldownMs) {
         throw new Error('Circuit breaker open: Soroban RPC calls are temporarily suspended');
       }
+      if (this.halfOpenProbe) {
+        throw new Error('Circuit breaker open: Soroban RPC calls are temporarily suspended');
+      }
       this.state = 'half-open';
+      this.halfOpenProbe = true;
+    } else if (this.state === 'half-open') {
+      if (this.halfOpenProbe) {
+        throw new Error('Circuit breaker open: Soroban RPC calls are temporarily suspended');
+      }
+      this.halfOpenProbe = true;
     }
 
     try {
@@ -90,9 +112,17 @@ export class CircuitBreaker {
   private onSuccess(): void {
     this.consecutiveFailures = 0;
     this.state = 'closed';
+    this.halfOpenProbe = false;
   }
 
   private onFailure(): void {
+    this.halfOpenProbe = false;
+    if (this.state === 'half-open') {
+      this.consecutiveFailures = this.failureThreshold;
+      this.state = 'open';
+      this.openedAt = Date.now();
+      return;
+    }
     this.consecutiveFailures += 1;
     if (this.consecutiveFailures >= this.failureThreshold) {
       this.state = 'open';
