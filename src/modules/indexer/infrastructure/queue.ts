@@ -60,6 +60,31 @@ export async function scheduleIndexerPolling(contracts: TrackedContractConfig[])
 }
 
 /**
+ * Explicit BullMQ worker options for the indexer poll worker (#356) — the
+ * library defaults (`concurrency: 1`, 30s lock) left the lock duration
+ * shorter than a legitimate catch-up poll over a slow RPC, which made
+ * BullMQ mark the job stalled mid-run and start a duplicate poll in
+ * parallel. Concurrent polls against the same Soroban RPC can ingest events
+ * out of order and corrupt the monotonic `blockchain_events` sequence the
+ * checkpoint table guarantees, so:
+ *
+ * - `concurrency: 1` — polls must never overlap, period.
+ * - `lockDuration: 60_000` — covers the worst-case poll tick; BullMQ
+ *   auto-renews the lock at half this interval for the life of the job, so
+ *   long batch processing stays safe without any application-side code.
+ * - `stalledInterval: 30_000` — how often the worker checks for expired
+ *   locks; a job only counts as stalled once its 60s lock has lapsed.
+ * - `maxStalledCount: 2` — tolerate a couple of genuine stalls (e.g. an RPC
+ *   pause during a deployment) before failing the job outright.
+ */
+export const indexerWorkerOptions = {
+  concurrency: 1,
+  lockDuration: 60_000,
+  stalledInterval: 30_000,
+  maxStalledCount: 2,
+} as const;
+
+/**
  * BullMQ Worker that processes the repeatable polling jobs — runs in the
  * worker process (src/workers/index.ts), not the API process.
  */
@@ -88,6 +113,6 @@ export function createIndexerWorker(prisma: PrismaClient): Worker {
       );
       return { ...result, lastLedgerSeq: result.lastLedgerSeq.toString() };
     },
-    { connection: getQueueConnection() },
+    { connection: getQueueConnection(), ...indexerWorkerOptions },
   );
 }

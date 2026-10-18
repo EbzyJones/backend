@@ -1,34 +1,14 @@
 import type { Worker } from 'bullmq';
 import closeWithGrace from 'close-with-grace';
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { logger } from '../shared/logger/index.js';
 import { getPrismaClient, disconnectPrisma } from '../shared/database/index.js';
 import { disconnectRedis } from '../shared/cache/index.js';
 import { disconnectQueueConnection, closeAllQueues } from '../shared/queue/index.js';
 import { createIndexerBackgroundWorker, scheduleIndexer } from '../modules/indexer/index.js';
+import { HEARTBEAT_INTERVAL_MS, createHeartbeatController } from './heartbeat.js';
+import { executeWorkerShutdownSteps } from './shutdown.js';
 
 const log = logger.child({ process: 'worker' });
-
-/**
- * The worker process has no HTTP surface, so `Dockerfile`'s worker
- * HEALTHCHECK can't probe it the way the api image probes `GET /health`.
- * Instead this touches a marker file on an interval; the HEALTHCHECK
- * considers the process wedged if the file's mtime falls too far behind —
- * see docs/DEPLOYMENT.md § Health Checks.
- */
-const HEARTBEAT_DIR = process.env.WORKER_HEARTBEAT_DIR ?? '/var/lib/fanilab/heartbeat';
-const HEARTBEAT_FILE = path.join(HEARTBEAT_DIR, 'worker.heartbeat');
-const HEARTBEAT_INTERVAL_MS = 15_000;
-
-async function writeHeartbeat(): Promise<void> {
-  try {
-    await mkdir(HEARTBEAT_DIR, { recursive: true });
-    await writeFile(HEARTBEAT_FILE, new Date().toISOString());
-  } catch (err) {
-    log.warn({ err }, 'Failed to write worker heartbeat file');
-  }
-}
 
 /**
  * Registry of BullMQ Workers for the background-processing entrypoint
@@ -48,22 +28,43 @@ async function main(): Promise<void> {
 
   const workers = registerWorkers.map((register) => register());
 
-  await writeHeartbeat();
-  const heartbeatTimer = setInterval(() => {
-    void writeHeartbeat();
-  }, HEARTBEAT_INTERVAL_MS);
+  // Every teardown step runs with its own timeout and best-effort, so a Redis
+  // that died alongside this container can't hang `worker.close()`/`queue.close()`
+  // past the orchestrator grace period — see ./shutdown.js (#355).
+  const { close: closeGracefully } = closeWithGrace(
+    { delay: 10_000 },
+    async ({ err }: { err?: Error }) => {
+      clearInterval(heartbeatTimer);
+      if (err) {
+        log.error({ err }, 'Shutting down worker process due to unhandled error');
+      } else {
+        log.info('Shutting down worker process gracefully');
+      }
+      const shutdownErrors = await executeWorkerShutdownSteps({
+        workers,
+        closeAllQueues,
+        disconnectPrisma,
+        disconnectRedis,
+        disconnectQueueConnection,
+      });
+      if (shutdownErrors.length > 0) {
+        log.error(
+          { errorCount: shutdownErrors.length, firstError: shutdownErrors[0] },
+          'Errors during worker shutdown',
+        );
+      }
+    },
+  );
 
-  closeWithGrace({ delay: 10_000 }, async ({ err }: { err?: Error }) => {
-    clearInterval(heartbeatTimer);
-    if (err) {
-      log.error({ err }, 'Shutting down worker process due to unhandled error');
-    } else {
-      log.info('Shutting down worker process gracefully');
-    }
-    await Promise.all(workers.map((worker) => worker.close()));
-    await closeAllQueues();
-    await Promise.all([disconnectPrisma(), disconnectRedis(), disconnectQueueConnection()]);
-  });
+  // A heartbeat write that keeps failing (read-only filesystem, full disk)
+  // triggers the same graceful-shutdown path as SIGTERM instead of leaving
+  // the container to be killed as unhealthy with no diagnostic — see
+  // ./heartbeat.js and docs/DEPLOYMENT.md § Health Checks (#357).
+  const heartbeat = createHeartbeatController(() => closeGracefully());
+  await heartbeat.write();
+  const heartbeatTimer = setInterval(() => {
+    void heartbeat.write();
+  }, HEARTBEAT_INTERVAL_MS);
 
   log.info({ workerCount: workers.length }, 'Worker process started');
 }
