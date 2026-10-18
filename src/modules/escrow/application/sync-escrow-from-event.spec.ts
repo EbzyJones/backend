@@ -188,14 +188,16 @@ describe('syncEscrowFromEvent', () => {
     expect(stored?.status).toBe('LOCKED');
   });
 
-  it('dispute_resolved: backfills platformFee when dispute resolves to RELEASED (issue #39)', async () => {
+  it('dispute_resolved: stamps releasedAt from ledger close time when the escrow was released (issue #39)', async () => {
     const { escrowRepository, contractReader, syncEscrowFromEvent } = setup();
-    escrowRepository.seed(buildEscrow({ chainDeliveryId: 2n, status: 'PAUSED', platformFee: null }));
-    contractReader.seed(2n, buildChainEscrowRecord({
-      chainDeliveryId: 2n,
-      status: 'RELEASED',
-      platformFee: 75000n,
-    }));
+    escrowRepository.seed(
+      buildEscrow({ chainDeliveryId: 2n, status: 'PAUSED', platformFee: null }),
+    );
+    // `buildChainEscrowRecord` is the on-chain `EscrowRecord` shape, which
+    // deliberately has no `platformFee` field — the fee is only observable
+    // from the `escrow_released` event payload (see the test above), never
+    // from a `get_escrow` read (#337).
+    contractReader.seed(2n, buildChainEscrowRecord({ chainDeliveryId: 2n, status: 'RELEASED' }));
     const closedAt = new Date('2026-01-04T00:00:00Z');
 
     await syncEscrowFromEvent(
