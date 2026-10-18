@@ -356,6 +356,10 @@ model FleetDriver {
   fleet Fleet @relation(fields: [fleetId], references: [id], onDelete: Cascade)
 
   @@unique([fleetId, driverAddress])
+  // Issue #368: totalActiveDrivers counts on (fleetId, status) — the unique
+  // (fleetId, driverAddress) key can only narrow to the fleet's rows and
+  // then filter status in a heap fetch.
+  @@index([fleetId, status])
   @@map("fleet_drivers")
 }
 
@@ -477,6 +481,11 @@ model Notification {
   @@index([userId])
   @@index([status])
   @@index([userId, createdAt(sort: Desc)])
+  // Issue #367: GET /notifications?status=PENDING combines userId + status +
+  // createdAt DESC — served index-only by this composite with no separate
+  // sort step, which neither single-column nor (userId, createdAt) index can
+  // do once a status filter narrows the rows.
+  @@index([userId, status, createdAt(sort: Desc)])
   @@map("notifications")
 }
 
