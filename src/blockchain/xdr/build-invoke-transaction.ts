@@ -1,5 +1,5 @@
 import { BASE_FEE, Contract, TransactionBuilder } from '@stellar/stellar-sdk';
-import type { xdr } from '@stellar/stellar-sdk';
+import type { Memo, xdr } from '@stellar/stellar-sdk';
 import { getConfig } from '../../shared/config/index.js';
 import type { SorobanClient } from '../soroban-client.js';
 
@@ -12,6 +12,13 @@ export interface BuildInvokeTransactionInput {
    * every FaniLab contract call reviewed in PHASE_1_DOMAIN_ANALYSIS.md, the
    * `require_auth()`'d party. */
   sourceAddress: string;
+  /** Optional fee cap in stroops. Defaults to BASE_FEE (100 stroops) when
+   * omitted — useful during network congestion when base-fee transactions
+   * would otherwise stall in validators' mempools. */
+  fee?: string | number;
+  /** Optional transaction memo (e.g. Memo.text('delivery-ref')) for
+   * accounting correlation. No memo is attached when omitted. */
+  memo?: Memo;
 }
 
 /**
@@ -32,13 +39,18 @@ export async function buildInvokeTransaction(
   const account = await client.getAccount(input.sourceAddress);
   const contract = new Contract(input.contractId);
 
-  const transaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+  let builder = new TransactionBuilder(account, {
+    fee: String(input.fee ?? BASE_FEE),
     networkPassphrase: config.STELLAR_NETWORK_PASSPHRASE,
   })
     .addOperation(contract.call(input.method, ...input.args))
-    .setTimeout(60)
-    .build();
+    .setTimeout(60);
+
+  if (input.memo) {
+    builder = builder.addMemo(input.memo);
+  }
+
+  const transaction = builder.build();
 
   const prepared = await client.prepareTransaction(transaction);
   return prepared.toXDR();

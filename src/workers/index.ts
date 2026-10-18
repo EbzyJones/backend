@@ -7,6 +7,11 @@ import { getPrismaClient, disconnectPrisma } from '../shared/database/index.js';
 import { disconnectRedis } from '../shared/cache/index.js';
 import { disconnectQueueConnection, closeAllQueues } from '../shared/queue/index.js';
 import { createIndexerBackgroundWorker, scheduleIndexer } from '../modules/indexer/index.js';
+import { createNotificationsBackgroundWorker } from '../modules/notifications/index.js';
+import {
+  createFraudDetectionCleanupBackgroundWorker,
+  scheduleFraudDetectionCleanup,
+} from '../modules/fraud-detection/index.js';
 
 const log = logger.child({ process: 'worker' });
 
@@ -37,14 +42,17 @@ async function writeHeartbeat(): Promise<void> {
  * or scale horizontally). Each module contributes its own worker(s) here as
  * it's implemented in Phase 5.
  */
-const registerWorkers: Array<() => Worker> = [
+export const registerWorkers: Array<() => Worker> = [
   () => createIndexerBackgroundWorker(getPrismaClient()),
+  () => createNotificationsBackgroundWorker(getPrismaClient()),
+  () => createFraudDetectionCleanupBackgroundWorker(getPrismaClient()),
 ];
 
 async function main(): Promise<void> {
   // Repeatable job registration is idempotent (BullMQ upserts by
   // name+repeat+jobId) — safe to call on every worker-process start.
   await scheduleIndexer();
+  await scheduleFraudDetectionCleanup();
 
   const workers = registerWorkers.map((register) => register());
 
