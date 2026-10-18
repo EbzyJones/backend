@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  EVENT_DISPATCH_CONCURRENCY,
   onBlockchainEvent,
   publishBlockchainEvent,
   subscribeBlockchainEventHandler,
@@ -148,5 +149,78 @@ describe('blockchain event bus', () => {
     expect(registry.getSingleMetric('event_subscriber_errors_total')).toBeDefined();
     expect(await registry.metrics()).toContain('# HELP event_subscriber_errors_total');
     expect(await registry.metrics()).toContain('# TYPE event_subscriber_errors_total counter');
+  });
+
+  it('resolves publish only after an async subscriber has finished', async () => {
+    let finished = false;
+    subscribe(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            finished = true;
+            resolve();
+          }, 5);
+        }),
+    );
+
+    await publishBlockchainEvent(buildEvent());
+
+    expect(finished).toBe(true);
+  });
+
+  it('bounds concurrent subscriber executions across 500 rapidly-published events', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let completed = 0;
+    subscribe(() => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          active -= 1;
+          completed += 1;
+          resolve();
+        }, 1);
+      });
+    });
+
+    const publishes = Array.from({ length: 500 }, (_, i) =>
+      publishBlockchainEvent(buildEvent({ rpcEventId: `evt-${i}` })),
+    );
+    await Promise.all(publishes);
+
+    // The whole point of the backpressure work (#349): never more than the
+    // configured pool size in flight, yet all 500 still complete.
+    expect(maxActive).toBeLessThanOrEqual(EVENT_DISPATCH_CONCURRENCY);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(completed).toBe(500);
+    expect(active).toBe(0);
+  });
+
+  it('keeps invoking synchronous subscribers before publish returns', () => {
+    const handler = vi.fn();
+    subscribe(handler);
+
+    publishBlockchainEvent(buildEvent());
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a rejecting raw listener toward event_subscriber_errors_total instead of failing the publish', async () => {
+    subscribe(() => Promise.reject(new Error('raw listener failed')));
+
+    await expect(
+      publishBlockchainEvent(
+        buildEvent({ rpcEventId: 'raw-failure', topic: ['raw_listener_probe'] }),
+      ),
+    ).resolves.toBeUndefined();
+
+    const metric = await eventSubscriberErrorsTotal.get();
+    const series = metric.values.find(
+      (value) =>
+        value.labels.subscriber === 'onBlockchainEvent' &&
+        value.labels.event === 'raw_listener_probe',
+    );
+    expect(series?.value).toBe(1);
   });
 });
