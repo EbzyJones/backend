@@ -157,4 +157,35 @@ describe.skipIf(!dbAvailable)('users routes (integration)', () => {
 
     expect(confirmResponse.statusCode).toBe(401);
   });
+
+  it('rate-limits challenge requests to 5 per minute per user — the 6th returns 429 (issue #375)', async () => {
+    const accessToken = await registerAndLogin();
+    const address = Keypair.random().publicKey();
+    const authHeader = { authorization: `Bearer ${accessToken}` };
+
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/users/me/wallets/challenge',
+        headers: authHeader,
+        payload: { address },
+      });
+      statuses.push(response.statusCode);
+    }
+
+    expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
+
+    // The budget is keyed per user, not per IP: a second account calling
+    // from the same address still has its own five requests available.
+    const otherToken = await registerAndLogin();
+    const otherResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/users/me/wallets/challenge',
+      headers: { authorization: `Bearer ${otherToken}` },
+      payload: { address: Keypair.random().publicKey() },
+    });
+
+    expect(otherResponse.statusCode).toBe(200);
+  });
 });
