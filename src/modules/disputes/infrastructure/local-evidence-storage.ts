@@ -37,7 +37,10 @@ export function createLocalEvidenceStorage(baseDir: string): EvidenceStorage {
     async read(storageUrl) {
       const resolved = path.resolve(resolvedBaseDir, storageUrl);
       if (!resolved.startsWith(resolvedBaseDir + path.sep)) {
-        throw new Error('Invalid evidence storage path');
+        // A path-traversal attempt is a client-supplied invalid reference,
+        // not a server crash — surface it as a domain 404 (an AppError) so
+        // the global error handler maps it to a clean 4xx instead of 500.
+        throw new EvidenceNotFoundError();
       }
       try {
         return await readFile(resolved);
