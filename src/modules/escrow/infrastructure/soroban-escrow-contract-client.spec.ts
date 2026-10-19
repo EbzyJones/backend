@@ -61,6 +61,114 @@ describe('createSorobanEscrowContractClient — write calls', () => {
     expect(scValToNative(args[5]!)).toBe('1000000');
   });
 
+  it('throws InsufficientFundsError when sender balance is lower than escrow amount', async () => {
+    const client = new SorobanClient();
+    const sender = Keypair.random().publicKey();
+    const recipient = Keypair.random().publicKey();
+    const driver = Keypair.random().publicKey();
+    const token = Address.contract(randomBytes(32)).toString();
+    stubPreparedTransaction(client, sender);
+
+    const fiveUsdcScVal = xdr.ScVal.scvI128(
+      new xdr.Int128Parts({ hi: new xdr.Int64(0n), lo: new xdr.Uint64(5_000_000n) }),
+    );
+    vi.spyOn(client, 'simulateTransaction').mockResolvedValue({
+      id: 'sim-id',
+      events: [],
+      latestLedger: 1000,
+      minResourceFee: '100',
+      result: {
+        auth: [],
+        retval: fiveUsdcScVal,
+      },
+      transactionData: new xdr.SorobanTransactionData({
+        ext: new xdr.ExtensionPoint(0),
+        resources: new xdr.SorobanResources({
+          footprint: new xdr.LedgerFootprint({ readOnly: [], readWrite: [] }),
+          instructions: 1000,
+          readBytes: 1000,
+          writeBytes: 1000,
+        }),
+        resourceFee: new xdr.Int64(100n),
+        refundableFee: new xdr.Int64(100n),
+      }),
+    } as unknown as rpc.Api.SimulateTransactionResponse);
+
+    const contractClient = createSorobanEscrowContractClient(client, CONTRACT_ID);
+
+    try {
+      await contractClient.buildCreateEscrow({
+        senderAddress: sender,
+        recipientAddress: recipient,
+        driverAddress: driver,
+        chainDeliveryId: 5n,
+        token,
+        amount: 10_000_000n, // 10 USDC
+      });
+      expect.fail('Expected buildCreateEscrow to throw InsufficientFundsError');
+    } catch (err: any) {
+      if (err.name === 'AssertionError') {
+        throw err;
+      }
+      expect(err.name).toBe('InsufficientFundsError');
+      expect(err.code).toBe('INSUFFICIENT_FUNDS');
+      expect(err.details).toEqual({
+        currentBalance: '5000000',
+        requiredAmount: '10000000',
+        missingAmount: '5000000',
+        token,
+        senderAddress: sender,
+      });
+    }
+  });
+
+  it('buildCreateEscrow succeeds when sender balance is sufficient', async () => {
+    const client = new SorobanClient();
+    const sender = Keypair.random().publicKey();
+    const recipient = Keypair.random().publicKey();
+    const driver = Keypair.random().publicKey();
+    const token = Address.contract(randomBytes(32)).toString();
+    stubPreparedTransaction(client, sender);
+
+    const fifteenUsdcScVal = xdr.ScVal.scvI128(
+      new xdr.Int128Parts({ hi: new xdr.Int64(0n), lo: new xdr.Uint64(15_000_000n) }),
+    );
+    vi.spyOn(client, 'simulateTransaction').mockResolvedValue({
+      id: 'sim-id',
+      events: [],
+      latestLedger: 1000,
+      minResourceFee: '100',
+      result: {
+        auth: [],
+        retval: fifteenUsdcScVal,
+      },
+      transactionData: new xdr.SorobanTransactionData({
+        ext: new xdr.ExtensionPoint(0),
+        resources: new xdr.SorobanResources({
+          footprint: new xdr.LedgerFootprint({ readOnly: [], readWrite: [] }),
+          instructions: 1000,
+          readBytes: 1000,
+          writeBytes: 1000,
+        }),
+        resourceFee: new xdr.Int64(100n),
+        refundableFee: new xdr.Int64(100n),
+      }),
+    } as unknown as rpc.Api.SimulateTransactionResponse);
+
+    const contractClient = createSorobanEscrowContractClient(client, CONTRACT_ID);
+
+    await expect(
+      contractClient.buildCreateEscrow({
+        senderAddress: sender,
+        recipientAddress: recipient,
+        driverAddress: driver,
+        chainDeliveryId: 5n,
+        token,
+        amount: 10_000_000n, // 10 USDC
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it('buildReleaseEscrow invokes release_escrow with (caller, delivery_id) and the caller as source', async () => {
     const client = new SorobanClient();
     const caller = Keypair.random().publicKey();

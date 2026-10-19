@@ -3,6 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import { getConfig } from '../../shared/config/index.js';
 import { getSorobanClient } from '../../blockchain/index.js';
 import { BlockchainError } from '../../shared/errors/index.js';
+import { logger } from '../../shared/logger/index.js';
 import {
   createBuildEscrowTransactionsUseCases,
   createGetEscrowUseCase,
@@ -43,6 +44,8 @@ export function createEscrowModule(prisma: PrismaClient): FastifyPluginAsyncZod 
   const syncEscrowFromEvent = createSyncEscrowFromEventUseCase({
     escrowRepository,
     contractReader: contractClient,
+    allowedTokens: config.ALLOWED_PAYMENT_TOKENS.length > 0 ? config.ALLOWED_PAYMENT_TOKENS : undefined,
+    logger,
   });
   subscribeEscrowEventSync(syncEscrowFromEvent);
 

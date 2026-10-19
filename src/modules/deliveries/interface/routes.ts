@@ -1,6 +1,7 @@
+import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { authenticate, ok } from '../../../shared/http/index.js';
-import type { Delivery } from '../domain/index.js';
+import { serializeDelivery } from '../domain/index.js';
 import type {
   createBuildDeliveryTransactionsUseCases,
   createGetDeliveryUseCase,
@@ -24,25 +25,6 @@ export interface DeliveriesUseCases {
   listDeliveries: ReturnType<typeof createListDeliveriesUseCase>;
   getDelivery: ReturnType<typeof createGetDeliveryUseCase>;
   buildTransactions: ReturnType<typeof createBuildDeliveryTransactionsUseCases>;
-}
-
-function serializeDelivery(delivery: Delivery) {
-  return {
-    id: delivery.id,
-    chainDeliveryId: delivery.chainDeliveryId.toString(),
-    senderAddress: delivery.senderAddress,
-    recipientAddress: delivery.recipientAddress,
-    driverAddress: delivery.driverAddress,
-    status: delivery.status,
-    origin: delivery.origin,
-    destination: delivery.destination,
-    cargoCategory: delivery.cargoCategory,
-    weightGrams: delivery.weightGrams,
-    fragile: delivery.fragile,
-    createdAtChain: delivery.createdAtChain.toISOString(),
-    transitStartedAt: delivery.transitStartedAt?.toISOString() ?? null,
-    deliveredAt: delivery.deliveredAt?.toISOString() ?? null,
-  };
 }
 
 export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPluginAsyncZod {
@@ -104,6 +86,7 @@ export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPlu
         schema: { body: assignDriverBodySchema, response: { 200: transactionResponseSchema } },
       },
       async (request, reply) => {
+        await ensureCallerOwnedByUser(config, request);
         const xdrEnvelope = await useCases.buildTransactions.buildAssignDriverTransaction({
           ...request.body,
           chainDeliveryId: BigInt(request.body.chainDeliveryId),
@@ -180,6 +163,7 @@ export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPlu
         schema: { body: raiseDisputeBodySchema, response: { 200: transactionResponseSchema } },
       },
       async (request, reply) => {
+        await ensureCallerOwnedByUser(config, request);
         const xdrEnvelope = await useCases.buildTransactions.buildRaiseDisputeTransaction({
           ...request.body,
           chainDeliveryId: BigInt(request.body.chainDeliveryId),

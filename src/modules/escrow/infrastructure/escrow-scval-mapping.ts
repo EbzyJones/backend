@@ -1,6 +1,7 @@
 import type { EscrowStatus } from '@prisma/client';
 import type { xdr } from '@stellar/stellar-sdk';
 import { addressToScVal, i128ToScVal, u64ToScVal } from '../../../blockchain/xdr/sc-val.js';
+import { ValidationError } from '../../../shared/errors/index.js';
 import type { ChainEscrowRecord, CreateEscrowTxInput } from '../domain/index.js';
 
 /**
@@ -34,6 +35,9 @@ const ESCROW_STATUS_FROM_RUST: Record<string, EscrowStatus> = {
 
 /** `create_escrow(sender, recipient, driver, delivery_id, token, amount)`. */
 export function createEscrowArgsToScVal(input: CreateEscrowTxInput): xdr.ScVal[] {
+  if (input.amount <= 0n) {
+    throw new ValidationError('Escrow amount must be greater than zero');
+  }
   return [
     addressToScVal(input.senderAddress),
     addressToScVal(input.recipientAddress),

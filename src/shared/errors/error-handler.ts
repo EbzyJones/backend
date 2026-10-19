@@ -111,6 +111,18 @@ export function handleError(
       void reply.status(409).send(body);
       return;
     }
+    if (error.code === 'P2000') {
+      const body: ErrorResponseBody = {
+        error: {
+          code: 'VALUE_TOO_LONG',
+          message: "The provided value for a column is too long for the column's type",
+          details: error.meta,
+        },
+        requestId,
+      };
+      void reply.status(400).send(body);
+      return;
+    }
     if (error.code === 'P2025') {
       const body: ErrorResponseBody = {
         error: { code: 'NOT_FOUND', message: 'Resource not found' },
@@ -147,6 +159,18 @@ export function handleError(
         error: { code: 'DATABASE_UNAVAILABLE', message: 'The database is currently unreachable' },
         requestId,
       };
+      void reply.status(503).send(body);
+      return;
+    }
+    if (error.code === 'P2024') {
+      const body: ErrorResponseBody = {
+        error: {
+          code: 'DATABASE_TIMEOUT',
+          message: 'Timed out fetching a new connection from the pool',
+        },
+        requestId,
+      };
+      void reply.header('Retry-After', '1');
       void reply.status(503).send(body);
       return;
     }

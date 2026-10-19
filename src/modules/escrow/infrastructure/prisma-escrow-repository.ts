@@ -56,6 +56,7 @@ function toDomain(record: PrismaEscrow): Escrow {
     releasedAt: record.releasedAt,
     refundedAt: record.refundedAt,
     createdAtChain: record.createdAtChain,
+    isVerified: record.isVerified,
   };
 }
 

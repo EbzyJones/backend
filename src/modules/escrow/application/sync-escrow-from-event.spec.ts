@@ -222,4 +222,63 @@ describe('syncEscrowFromEvent', () => {
     expect(stored?.status).toBe('RELEASED');
     expect(stored?.releasedAt).toEqual(closedAt);
   });
+
+  it('escrow_funded: creates escrow as verified when token is on the configured allowlist', async () => {
+    const escrowRepository = createInMemoryEscrowRepository();
+    const contractReader = createFakeEscrowContractReader();
+    const usdcToken = 'CUSDC_OFFICIAL_ADDRESS_EXAMPLE';
+    const syncEscrowFromEvent = createSyncEscrowFromEventUseCase({
+      escrowRepository,
+      contractReader,
+      allowedTokens: [usdcToken],
+    });
+
+    contractReader.seed(
+      10n,
+      buildChainEscrowRecord({ chainDeliveryId: 10n, token: usdcToken }),
+    );
+
+    await syncEscrowFromEvent(buildEscrowEvent({ topic: ['escrow_funded', '10'] }));
+
+    const stored = await escrowRepository.findByChainDeliveryId(10n);
+    expect(stored).not.toBeNull();
+    expect(stored?.token).toBe(usdcToken);
+    expect(stored?.isVerified).toBe(true);
+  });
+
+  it('escrow_funded: flags escrow as isVerified: false and logs warning when token is not on allowlist', async () => {
+    const escrowRepository = createInMemoryEscrowRepository();
+    const contractReader = createFakeEscrowContractReader();
+    const allowedToken = 'CUSDC_OFFICIAL_ADDRESS_EXAMPLE';
+    const rogueToken = 'CROGUE_TOKEN_MALICIOUS_ADDRESS';
+    const warnLogs: unknown[] = [];
+    const fakeLogger = {
+      warn: (obj: unknown, msg: string) => {
+        warnLogs.push({ obj, msg });
+      },
+    } as any;
+
+    const syncEscrowFromEvent = createSyncEscrowFromEventUseCase({
+      escrowRepository,
+      contractReader,
+      allowedTokens: [allowedToken],
+      logger: fakeLogger,
+    });
+
+    contractReader.seed(
+      11n,
+      buildChainEscrowRecord({ chainDeliveryId: 11n, token: rogueToken }),
+    );
+
+    await syncEscrowFromEvent(buildEscrowEvent({ topic: ['escrow_funded', '11'] }));
+
+    const stored = await escrowRepository.findByChainDeliveryId(11n);
+    expect(stored).not.toBeNull();
+    expect(stored?.token).toBe(rogueToken);
+    expect(stored?.isVerified).toBe(false);
+    expect(warnLogs.length).toBeGreaterThan(0);
+    expect(warnLogs[0]).toMatchObject({
+      msg: expect.stringContaining('Unrecognized payment token'),
+    });
+  });
 });
