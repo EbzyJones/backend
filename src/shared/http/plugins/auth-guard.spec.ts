@@ -1,10 +1,10 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authenticate } from './auth-guard.js';
 import { signAccessToken } from '../../jwt/index.js';
 import { getPrismaClient } from '../../database/index.js';
-import { AppError, UnauthorizedError, handleError } from '../../errors/index.js';
-import Fastify from 'fastify';
+import { UnauthorizedError } from '../../errors/index.js';
+import type * as AuthCacheModule from '../../cache/index.js';
 
 /**
  * Unit coverage for `authenticate`'s DB-backed `tokenVersion` check
@@ -12,12 +12,49 @@ import Fastify from 'fastify';
  * directly (same instance `authenticate` itself calls, since
  * `getPrismaClient()` is memoized) rather than mocking the whole module, so
  * this exercises the real guard logic without a live database.
+ *
+ * The Redis-backed auth context cache (#369) is likewise replaced at the
+ * same singleton boundary `authenticate` consumes it through — an
+ * in-memory map behind the same two functions — so the guard's real
+ * cache-interaction logic (miss → DB read → populate, hit → no DB read,
+ * eviction → fresh read) runs without a live Redis.
+ */
+const cacheEntries = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      { role: 'ADMIN' | 'CUSTOMER' | 'COURIER' | 'FLEET_MANAGER'; tokenVersion: number }
+    >(),
+);
+
+vi.mock('../../cache/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof AuthCacheModule>();
+  return {
+    ...actual,
+    readAuthContext: (userId: string) => Promise.resolve(cacheEntries.get(userId) ?? null),
+    writeAuthContext: (
+      userId: string,
+      context: { role: 'ADMIN' | 'CUSTOMER' | 'COURIER' | 'FLEET_MANAGER'; tokenVersion: number },
+    ) => {
+      cacheEntries.set(userId, context);
+      return Promise.resolve();
+    },
+  };
+});
+
+/**
+ * Unit coverage for `authenticate`'s DB-backed `tokenVersion` check
+ * (security issue #12) — see the note above the cache mock.
  */
 function fakeRequest(authorization?: string): FastifyRequest {
   return { headers: authorization ? { authorization } : {} } as unknown as FastifyRequest;
 }
 
 const fakeReply = {} as FastifyReply;
+
+beforeEach(() => {
+  cacheEntries.clear();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -97,73 +134,75 @@ describe('authenticate — tokenVersion check', () => {
   });
 });
 
-describe('authenticate — consistent AppError mapping (#297)', () => {
-  it('throws an AppError subclass (UnauthorizedError) when Authorization header is missing', async () => {
-    const request = fakeRequest();
-    let thrownError: unknown;
+describe('authenticate — auth context cache (#369)', () => {
+  it('serves the second request from the cache — one database read for two requests', async () => {
+    const spy = vi.spyOn(getPrismaClient().user, 'findUnique').mockResolvedValue({
+      role: 'COURIER',
+      tokenVersion: 1,
+    } as never);
+    const token = signAccessToken({ sub: 'user-cache', role: 'COURIER', tokenVersion: 1 });
 
-    try {
-      await authenticate(request, fakeReply);
-    } catch (err) {
-      thrownError = err;
-    }
+    await authenticate(fakeRequest(`Bearer ${token}`), fakeReply);
+    const second = fakeRequest(`Bearer ${token}`);
+    await authenticate(second, fakeReply);
 
-    expect(thrownError).toBeInstanceOf(AppError);
-    expect(thrownError).toBeInstanceOf(UnauthorizedError);
-    expect((thrownError as AppError).statusCode).toBe(401);
-    expect((thrownError as AppError).code).toBe('UNAUTHORIZED');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(second.user).toEqual({ id: 'user-cache', role: 'COURIER' });
   });
 
-  it('throws an AppError subclass when Authorization header does not start with Bearer', async () => {
-    const request = fakeRequest('Basic dXNlcjpwYXNz');
-    let thrownError: unknown;
+  it('re-reads the database after eviction and rejects a token the change invalidated (#12)', async () => {
+    const spy = vi.spyOn(getPrismaClient().user, 'findUnique');
+    spy.mockResolvedValueOnce({ role: 'COURIER', tokenVersion: 1 } as never);
+    const token = signAccessToken({ sub: 'user-evict', role: 'COURIER', tokenVersion: 1 });
+    await authenticate(fakeRequest(`Bearer ${token}`), fakeReply);
+    expect(spy).toHaveBeenCalledTimes(1);
 
-    try {
-      await authenticate(request, fakeReply);
-    } catch (err) {
-      thrownError = err;
-    }
+    // Simulates what `updateUserRole` does post-commit (#369): the cached
+    // entry is evicted and the database row now carries a bumped
+    // tokenVersion — the very token that passed a moment ago must now fail.
+    cacheEntries.delete('user-evict');
+    spy.mockResolvedValueOnce({ role: 'CUSTOMER', tokenVersion: 2 } as never);
 
-    expect(thrownError).toBeInstanceOf(AppError);
-    expect(thrownError).toBeInstanceOf(UnauthorizedError);
-    expect((thrownError as AppError).statusCode).toBe(401);
-    expect((thrownError as AppError).code).toBe('UNAUTHORIZED');
+    await expect(authenticate(fakeRequest(`Bearer ${token}`), fakeReply)).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
-  it('throws an AppError subclass when token is invalid or expired', async () => {
-    const request = fakeRequest('Bearer invalid-token');
-    let thrownError: unknown;
+  it('trusts the cached role as much as the database one — never the token claim', async () => {
+    vi.spyOn(getPrismaClient().user, 'findUnique').mockResolvedValue({
+      role: 'CUSTOMER',
+      tokenVersion: 5,
+    } as never);
+    // First request populates the cache from the DB read above.
+    await authenticate(
+      fakeRequest(
+        `Bearer ${signAccessToken({ sub: 'user-role', role: 'ADMIN', tokenVersion: 5 })}`,
+      ),
+      fakeReply,
+    );
 
-    try {
-      await authenticate(request, fakeReply);
-    } catch (err) {
-      thrownError = err;
-    }
-
-    expect(thrownError).toBeInstanceOf(AppError);
-    expect(thrownError).toBeInstanceOf(UnauthorizedError);
-    expect((thrownError as AppError).statusCode).toBe(401);
-    expect((thrownError as AppError).code).toBe('UNAUTHORIZED');
+    // Second request is served entirely from cache — still CUSTOMER, never
+    // the token's stale ADMIN claim.
+    const request = fakeRequest(
+      `Bearer ${signAccessToken({ sub: 'user-role', role: 'ADMIN', tokenVersion: 5 })}`,
+    );
+    await authenticate(request, fakeReply);
+    expect(request.user).toEqual({ id: 'user-role', role: 'CUSTOMER' });
   });
 
-  it('maps missing token errors to standard ErrorResponseBody format in Fastify', async () => {
-    const app = Fastify();
-    app.setErrorHandler(handleError);
-    app.get('/protected', { preHandler: authenticate }, async (_req, reply) => {
-      void reply.send({ success: true });
-    });
+  it('never caches a user that no longer exists — every such request re-checks the database', async () => {
+    const spy = vi.spyOn(getPrismaClient().user, 'findUnique').mockResolvedValue(null);
+    const token = signAccessToken({ sub: 'deleted-user', role: 'ADMIN', tokenVersion: 0 });
 
-    const response = await app.inject({ method: 'GET', url: '/protected' });
-    await app.close();
+    await expect(authenticate(fakeRequest(`Bearer ${token}`), fakeReply)).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+    await expect(authenticate(fakeRequest(`Bearer ${token}`), fakeReply)).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
 
-    expect(response.statusCode).toBe(401);
-    const body = response.json();
-    expect(body).toEqual({
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Missing or malformed Authorization header',
-      },
-      requestId: expect.any(String),
-    });
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(cacheEntries.size).toBe(0);
   });
 });

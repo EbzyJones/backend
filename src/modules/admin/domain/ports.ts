@@ -106,3 +106,25 @@ export interface SessionRevoker {
    */
   revokeAllForUser(userId: string): Promise<void>;
 }
+
+/**
+ * Evicts the shared HTTP auth guard's per-user `{ role, tokenVersion }`
+ * cache entry (#369) — the cache-side counterpart to `SessionRevoker`
+ * above, and the reason that cache can carry a short TTL without weakening
+ * security issue #12's "takes effect on the very next request" guarantee:
+ * the only code that changes a user's role or token version calls this
+ * immediately after the change commits, so staleness is bounded by the
+ * eviction, not by the TTL. (Evicting *inside* the unit of work — where
+ * `SessionRevoker` runs — would leave a window in which a concurrent
+ * request re-populates the cache from the still-current pre-bump row; that
+ * entry would then outlive the commit for the full TTL. Hence a separate,
+ * post-commit port rather than a method on `SessionRevoker`.)
+ *
+ * Implementations must not throw: `updateUserRole` calls this after the
+ * role change has already committed, so a failed eviction leaves a stale
+ * entry until TTL expiry — bounded, and far better than turning a
+ * committed privilege change into an apparent failed request.
+ */
+export interface AuthCacheInvalidator {
+  invalidateUser(userId: string): Promise<void>;
+}
