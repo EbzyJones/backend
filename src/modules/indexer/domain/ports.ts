@@ -31,9 +31,15 @@ export interface EventSource {
 /**
  * In-process publish point for durably-stored events — module handlers
  * (deliveries, escrow, disputes, ...) subscribe here once they exist
- * (ARCHITECTURE.md §11: not a distributed bus in v1). No subscribers exist
- * yet in this phase; publishing to zero listeners is normal, not premature.
+ * (ARCHITECTURE.md §11: not a distributed bus in v1). Publishing to zero
+ * listeners is normal, not premature.
+ *
+ * May be asynchronous: the in-process bus bounds subscriber concurrency and
+ * returns a promise that settles only once every subscriber has finished.
+ * `pollContractEvents` awaits it before advancing the checkpoint, so a batch
+ * is fully handled by every subscriber before the next batch is ingested
+ * (issue #349 — backpressure for event replay / post-downtime catch-up).
  */
 export interface EventPublisher {
-  publish(event: StoredEvent): void;
+  publish(event: StoredEvent): void | Promise<void>;
 }

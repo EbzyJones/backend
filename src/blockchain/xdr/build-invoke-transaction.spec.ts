@@ -5,6 +5,7 @@ import {
   BASE_FEE,
   Contract,
   Keypair,
+  Memo,
   TransactionBuilder,
 } from '@stellar/stellar-sdk';
 import { describe, expect, it, vi } from 'vitest';
@@ -58,5 +59,104 @@ describe('buildInvokeTransaction', () => {
     expect(builtTx?.operations).toHaveLength(1);
     const operation = builtTx?.operations[0];
     expect(operation?.type).toBe('invokeHostFunction');
+  });
+
+  it('uses a custom fee cap when provided (e.g. 10,000 stroops)', async () => {
+    const sourceKeypairAddress = Keypair.random().publicKey();
+    const account = new Account(sourceKeypairAddress, '100');
+    const contractId = Address.contract(randomBytes(32)).toString();
+
+    const client = new SorobanClient();
+    vi.spyOn(client, 'getAccount').mockResolvedValue(account);
+
+    const preparedTx = new TransactionBuilder(new Account(sourceKeypairAddress, '100'), {
+      fee: BASE_FEE,
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
+      .addOperation(new Contract(contractId).call('assign_driver'))
+      .setTimeout(60)
+      .build();
+    const prepareSpy = vi.spyOn(client, 'prepareTransaction').mockResolvedValue(preparedTx);
+
+    await buildInvokeTransaction(client, {
+      contractId,
+      method: 'assign_driver',
+      args: [u64ToScVal(7n)],
+      sourceAddress: sourceKeypairAddress,
+      fee: 10_000,
+    });
+
+    expect(prepareSpy).toHaveBeenCalledTimes(1);
+    const builtTx = prepareSpy.mock.calls[0]?.[0];
+    expect(builtTx?.fee).toBe('10000');
+  });
+
+  it('attaches Memo.text to the built envelope when a memo is provided', async () => {
+    const sourceKeypairAddress = Keypair.random().publicKey();
+    const account = new Account(sourceKeypairAddress, '100');
+    const contractId = Address.contract(randomBytes(32)).toString();
+
+    const client = new SorobanClient();
+    vi.spyOn(client, 'getAccount').mockResolvedValue(account);
+
+    const preparedTx = new TransactionBuilder(new Account(sourceKeypairAddress, '100'), {
+      fee: BASE_FEE,
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
+      .addOperation(new Contract(contractId).call('assign_driver'))
+      .setTimeout(60)
+      .build();
+    const prepareSpy = vi.spyOn(client, 'prepareTransaction').mockResolvedValue(preparedTx);
+
+    await buildInvokeTransaction(client, {
+      contractId,
+      method: 'assign_driver',
+      args: [u64ToScVal(7n)],
+      sourceAddress: sourceKeypairAddress,
+      memo: Memo.text('delivery-ref'),
+    });
+
+    expect(prepareSpy).toHaveBeenCalledTimes(1);
+    const builtTx = prepareSpy.mock.calls[0]?.[0];
+    expect(builtTx).toBeDefined();
+    if (!builtTx || !('memo' in builtTx)) {
+      throw new Error('expected a Transaction, not a FeeBumpTransaction');
+    }
+    expect(builtTx.memo).toEqual(Memo.text('delivery-ref'));
+  });
+
+  it('defaults to BASE_FEE and no memo when fee and memo are omitted', async () => {
+    const sourceKeypairAddress = Keypair.random().publicKey();
+    const account = new Account(sourceKeypairAddress, '100');
+    const contractId = Address.contract(randomBytes(32)).toString();
+
+    const client = new SorobanClient();
+    vi.spyOn(client, 'getAccount').mockResolvedValue(account);
+
+    const preparedTx = new TransactionBuilder(new Account(sourceKeypairAddress, '100'), {
+      fee: BASE_FEE,
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
+      .addOperation(new Contract(contractId).call('assign_driver'))
+      .setTimeout(60)
+      .build();
+    const prepareSpy = vi.spyOn(client, 'prepareTransaction').mockResolvedValue(preparedTx);
+
+    await buildInvokeTransaction(client, {
+      contractId,
+      method: 'assign_driver',
+      args: [u64ToScVal(7n)],
+      sourceAddress: sourceKeypairAddress,
+    });
+
+    expect(prepareSpy).toHaveBeenCalledTimes(1);
+    const builtTx = prepareSpy.mock.calls[0]?.[0];
+    expect(builtTx).toBeDefined();
+    if (!builtTx || !('memo' in builtTx)) {
+      throw new Error('expected a Transaction, not a FeeBumpTransaction');
+    }
+    expect(builtTx.fee).toBe(BASE_FEE);
+    expect(builtTx.memo.type).toBe(Memo.none().type);
+    expect(builtTx.memo.value).toBeNull();
   });
 });

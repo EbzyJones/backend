@@ -66,6 +66,34 @@ describe('sendNotification', () => {
     expect((await notificationRepository.findById(notification.id))?.status).toBe('FAILED');
   });
 
+  it('throws a retryable error when the contact is missing on a non-final attempt (issue #354)', async () => {
+    const { notificationRepository, sender, sendNotification } = setup();
+    const notification = buildNotification({ userId: 'ghost-user' });
+    notificationRepository.seed(notification);
+
+    await expect(
+      sendNotification({ notificationId: notification.id, isFinalAttempt: false }),
+    ).rejects.toThrow(/contact email not found/i);
+
+    // The row stays PENDING while BullMQ retries remain — only the final
+    // attempt is allowed to flip it to FAILED.
+    expect(sender.sent).toHaveLength(0);
+    expect((await notificationRepository.findById(notification.id))?.status).toBe('PENDING');
+  });
+
+  it('marks FAILED without throwing when the contact is missing on the final attempt (issue #354)', async () => {
+    const { notificationRepository, sender, sendNotification } = setup();
+    const notification = buildNotification({ userId: 'ghost-user' });
+    notificationRepository.seed(notification);
+
+    await expect(
+      sendNotification({ notificationId: notification.id, isFinalAttempt: true }),
+    ).resolves.toBeUndefined();
+
+    expect(sender.sent).toHaveLength(0);
+    expect((await notificationRepository.findById(notification.id))?.status).toBe('FAILED');
+  });
+
   it('marks FAILED without touching the email sender for a persisted SMS row (issue #12)', async () => {
     const { notificationRepository, userContactLookup, sender, sendNotification } = setup();
     const notification = buildNotification({ userId: 'user-1', channel: 'SMS' });

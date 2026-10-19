@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { testAddress } from '../../../shared/testing/addresses.js';
 import { createSyncEscrowFromEventUseCase } from './sync-escrow-from-event.js';
 import {
   buildChainEscrowRecord,
@@ -40,7 +41,7 @@ describe('syncEscrowFromEvent', () => {
         // The payload deliberately does NOT contain '99' anywhere, so a
         // handler that (incorrectly) tried to read the id from the payload
         // would fail to find delivery 99 at all.
-        payload: ['GSENDER', 'GRECIPIENT', '1000000'],
+        payload: [testAddress('sender'), testAddress('recipient'), '1000000'],
       }),
     );
 
@@ -71,7 +72,7 @@ describe('syncEscrowFromEvent', () => {
     await syncEscrowFromEvent(
       buildEscrowEvent({
         topic: ['escrow_released', '1'],
-        payload: ['GDRIVER', '950000', '50000'],
+        payload: [testAddress('driver'), '950000', '50000'],
         closedAt,
       }),
     );
@@ -90,7 +91,7 @@ describe('syncEscrowFromEvent', () => {
     await syncEscrowFromEvent(
       buildEscrowEvent({
         topic: ['escrow_refunded', '1'],
-        payload: ['GSENDER', '1000000'],
+        payload: [testAddress('sender'), '1000000'],
         closedAt,
       }),
     );
@@ -108,14 +109,14 @@ describe('syncEscrowFromEvent', () => {
     await syncEscrowFromEvent(
       buildEscrowEvent({
         topic: ['delivery_disputed', '1'],
-        payload: ['GDISPUTER', '1700000000'],
+        payload: [testAddress('disputer'), '1700000000'],
         closedAt,
       }),
     );
 
     const stored = await escrowRepository.findByChainDeliveryId(1n);
     expect(stored?.status).toBe('PAUSED');
-    expect(stored?.disputedBy).toBe('GDISPUTER');
+    expect(stored?.disputedBy).toBe(testAddress('disputer'));
     expect(stored?.disputedAt).toEqual(closedAt);
   });
 
@@ -125,7 +126,10 @@ describe('syncEscrowFromEvent', () => {
     contractReader.seed(1n, buildChainEscrowRecord({ chainDeliveryId: 1n, status: 'RELEASED' }));
 
     await syncEscrowFromEvent(
-      buildEscrowEvent({ topic: ['dispute_resolved', '1'], payload: ['GADMIN', 'GADMIN'] }),
+      buildEscrowEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: [testAddress('admin'), testAddress('admin')],
+      }),
     );
 
     expect((await escrowRepository.findByChainDeliveryId(1n))?.status).toBe('RELEASED');
@@ -137,7 +141,10 @@ describe('syncEscrowFromEvent', () => {
     contractReader.seed(1n, buildChainEscrowRecord({ chainDeliveryId: 1n, status: 'REFUNDED' }));
 
     await syncEscrowFromEvent(
-      buildEscrowEvent({ topic: ['dispute_resolved', '1'], payload: ['GADMIN', 'GADMIN'] }),
+      buildEscrowEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: [testAddress('admin'), testAddress('admin')],
+      }),
     );
 
     expect((await escrowRepository.findByChainDeliveryId(1n))?.status).toBe('REFUNDED');
@@ -165,7 +172,10 @@ describe('syncEscrowFromEvent', () => {
     contractReader.seed(1n, buildChainEscrowRecord({ chainDeliveryId: 1n, status: 'LOCKED' }));
 
     await syncEscrowFromEvent(
-      buildEscrowEvent({ topic: ['dispute_resolved', '1'], payload: ['GADMIN', 'GADMIN'] }),
+      buildEscrowEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: [testAddress('admin'), testAddress('admin')],
+      }),
     );
 
     const stored = await escrowRepository.findByChainDeliveryId(1n);
@@ -178,7 +188,7 @@ describe('syncEscrowFromEvent', () => {
     contractReader.seed(1n, buildChainEscrowRecord({ chainDeliveryId: 1n, status: 'LOCKED' }));
     const event = buildEscrowEvent({
       topic: ['dispute_resolved', '1'],
-      payload: ['GADMIN', 'GADMIN'],
+      payload: [testAddress('admin'), testAddress('admin')],
     });
 
     await syncEscrowFromEvent(event);
@@ -188,20 +198,22 @@ describe('syncEscrowFromEvent', () => {
     expect(stored?.status).toBe('LOCKED');
   });
 
-  it('dispute_resolved: backfills platformFee when dispute resolves to RELEASED (issue #39)', async () => {
+  it('dispute_resolved: stamps releasedAt from ledger close time when the escrow was released (issue #39)', async () => {
     const { escrowRepository, contractReader, syncEscrowFromEvent } = setup();
-    escrowRepository.seed(buildEscrow({ chainDeliveryId: 2n, status: 'PAUSED', platformFee: null }));
-    contractReader.seed(2n, buildChainEscrowRecord({
-      chainDeliveryId: 2n,
-      status: 'RELEASED',
-      platformFee: 75000n,
-    }));
+    escrowRepository.seed(
+      buildEscrow({ chainDeliveryId: 2n, status: 'PAUSED', platformFee: null }),
+    );
+    // `buildChainEscrowRecord` is the on-chain `EscrowRecord` shape, which
+    // deliberately has no `platformFee` field — the fee is only observable
+    // from the `escrow_released` event payload (see the test above), never
+    // from a `get_escrow` read (#337).
+    contractReader.seed(2n, buildChainEscrowRecord({ chainDeliveryId: 2n, status: 'RELEASED' }));
     const closedAt = new Date('2026-01-04T00:00:00Z');
 
     await syncEscrowFromEvent(
       buildEscrowEvent({
         topic: ['dispute_resolved', '2'],
-        payload: ['GADMIN', 'GADMIN'],
+        payload: [testAddress('admin'), testAddress('admin')],
         closedAt,
       }),
     );

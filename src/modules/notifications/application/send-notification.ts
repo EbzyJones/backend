@@ -38,7 +38,10 @@ export interface SendNotificationInput {
  * chance to succeed on a later attempt — but the row is only marked
  * `FAILED` when `isFinalAttempt` is true; an intermediate failure leaves it
  * `PENDING` so `GET /notifications?status=FAILED` never reports a
- * still-retrying send as permanently failed (see #104).
+ * still-retrying send as permanently failed (see #104). A recipient with no
+ * resolvable contact email yet is treated the same way on non-final
+ * attempts (#354): returning void would let BullMQ mark the job completed
+ * while the row stayed `PENDING` forever.
  */
 export function createSendNotificationUseCase(deps: SendNotificationDeps) {
   return async function sendNotification(input: SendNotificationInput): Promise<void> {
@@ -71,12 +74,24 @@ export function createSendNotificationUseCase(deps: SendNotificationDeps) {
     if (!contact) {
       if (isFinalAttempt) {
         await deps.notificationRepository.markFailed(notification.id);
+        log.error(
+          { notificationId: notification.id, userId: notification.userId, isFinalAttempt },
+          'No contact email found for notification recipient',
+        );
+        return;
       }
-      log.error(
-        { notificationId: notification.id, userId: notification.userId, isFinalAttempt },
-        'No contact email found for notification recipient',
+      // A missing contact is usually transient (the user's email hasn't been
+      // indexed/confirmed yet — which is exactly why this lookup re-resolves
+      // per attempt instead of capturing the address at dispatch time).
+      // Returning void here would make BullMQ treat the job as *completed*
+      // on attempt 1 and drop it from the retry queue while the row stayed
+      // `PENDING` forever (#354), so a non-final attempt rethrows to schedule
+      // a backoff retry; the row is only marked `FAILED` once `isFinalAttempt`.
+      log.warn(
+        { notificationId: notification.id, userId: notification.userId },
+        'No contact email found for notification recipient — retrying',
       );
-      return;
+      throw new Error(`User contact email not found for notification ${notification.id}; retrying`);
     }
 
     try {

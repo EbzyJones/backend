@@ -9,24 +9,46 @@
  * business logic. Module handlers import them instead of re-declaring their
  * own private copies (previously duplicated across ~12 application-layer
  * files). Any hardening here — e.g. rejecting a non-finite number before it
- * reaches `BigInt()` — then applies to every module at once.
+ * reaches `BigInt()`, or requiring a real StrKey checksum on an address —
+ * then applies to every module at once.
  */
 
-/** A payload element is only a usable address if it is already a string. */
+import { StrKey } from '@stellar/stellar-sdk';
+
+/**
+ * A payload element is only a usable address if it is a *valid* Stellar
+ * address: an ed25519 account (`G...`), a muxed account (`M...`), or a
+ * contract (`C...`). Anything else — arbitrary strings, empty strings,
+ * non-Stellar identifiers such as `0x...` hashes, or absurdly long garbage
+ * a malicious/unexpected contract event could carry — yields `null` so the
+ * caller treats the event as malformed instead of persisting a value that
+ * would later blow up transaction building or signature verification.
+ * The checksum-verified StrKey checks are the same validation the rest of
+ * the codebase applies to addresses (see `shared/validation/stellar-address.ts`).
+ */
 export function parseAddress(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
+  if (typeof value !== 'string') return null;
+  const isValid =
+    StrKey.isValidEd25519PublicKey(value) ||
+    StrKey.isValidMed25519PublicKey(value) ||
+    StrKey.isValidContract(value);
+  return isValid ? value : null;
 }
 
 /**
  * Parse a payload element that encodes an unsigned on-chain id (delivery id,
  * fleet id, ...) as either a decimal string or a JS number. Anything else —
- * including a value `BigInt()` would throw on — yields `null` so the caller
- * can treat the event as malformed rather than crashing the indexer.
+ * including a value `BigInt()` would throw on, a negative number or negative
+ * numeric string (on-chain ids are strictly unsigned u64/u32, and downstream
+ * XDR encoders like `u64ToScVal` require non-negative bigints), or a
+ * non-integer such as 1.5 — yields `null` so the caller can treat the event
+ * as malformed rather than crashing the indexer or persisting a negative id.
  */
 export function parseBigIntId(value: unknown): bigint | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   try {
-    return BigInt(value);
+    const id = BigInt(value);
+    return id >= 0n ? id : null;
   } catch {
     return null;
   }

@@ -44,3 +44,9 @@ export const queueJobsGauge = new Gauge({
   labelNames: ['queue', 'state'],
   registers: [registry],
 });
+
+export const workerHeartbeatFailuresTotal = new Counter({
+  name: 'worker_heartbeat_failures_total',
+  help: 'Worker heartbeat file write failures since process start',
+  registers: [registry],
+});
