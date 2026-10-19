@@ -11,6 +11,7 @@ function toDomain(record: PrismaDriverProfile): DriverProfile {
     deliveriesCompleted: record.deliveriesCompleted,
     legacyDeliveriesCompleted: record.legacyDeliveriesCompleted,
     registeredAt: record.registeredAt,
+    createdAt: record.createdAt,
   };
 }
 

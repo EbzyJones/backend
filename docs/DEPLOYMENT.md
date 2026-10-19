@@ -39,6 +39,27 @@ Contract IDs (`ESCROW_CONTRACT_ID`, etc.) and network settings (`STELLAR_NETWORK
 
 `MAIL_PROVIDER`/`NOTIFICATION_PROVIDER` default to `logger` — a genuinely functional dev/test default that logs mail instead of sending it (see `docs/AUTHENTICATION.md` § Dev email delivery). Booting with `NODE_ENV=production` while either is left at `logger` fails at startup with a clear error; set either to `smtp`, `sendgrid`, or `ses` and configure the shared SMTP relay (`SMTP_HOST` + `SMTP_FROM` required at parse time, `SMTP_PORT` defaults to 587, `SMTP_USER`/`SMTP_PASSWORD` must be set together when the relay needs AUTH, `SMTP_TLS_CA_PATH` for a private CA) — all three providers deliver through the same client (`src/shared/smtp/smtp-client.ts`) selected by `select-mailer.ts`/`select-notification-sender.ts`.
 
+### Database Connection Pooling
+
+Prisma manages its own connection pool per process. By default the pool size is
+`num_physical_cpus * 2 + 1` — only **3 connections on a single-vCPU container** —
+which is easily exhausted under burst API traffic, producing Prisma `P2024`
+connection-pool timeouts.
+
+Two environment variables control the pool (validated by `src/shared/config/env.ts`,
+see `src/shared/database/prisma-client.ts`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_POOL_SIZE` | `10` | Maximum connections in the Prisma pool. Set above the expected peak concurrent database queries. |
+| `DATABASE_POOL_TIMEOUT` | `10` | Seconds to wait for a free connection before Prisma raises `P2024`. |
+
+Size the pool for your deployment's concurrency: a good starting point is
+`(expected concurrent requests) × (average DB queries per request)`, with
+headroom for the worker process's own pool. If you see `P2024` errors, increase
+`DATABASE_POOL_SIZE` rather than `DATABASE_POOL_TIMEOUT` — a longer timeout
+merely delays failures under sustained pressure.
+
 ## Health Checks
 
 - `GET /health` — liveness/readiness: database + Redis reachability (see `src/shared/http/routes/health.ts`). **Point your orchestrator's readiness probe at this endpoint.**

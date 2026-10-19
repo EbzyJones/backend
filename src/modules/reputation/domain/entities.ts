@@ -15,6 +15,7 @@ export interface DriverProfile {
    * `LegacyDriverProfileReader` for why this is a distinct on-chain source. */
   legacyDeliveriesCompleted: number;
   registeredAt: Date;
+  createdAt: Date;
 }
 
 /**

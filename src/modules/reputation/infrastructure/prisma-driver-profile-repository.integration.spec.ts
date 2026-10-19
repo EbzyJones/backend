@@ -43,6 +43,7 @@ describe.skipIf(!dbAvailable)('Prisma driver profile repository (integration)', 
       kycVerified: false,
       legacyDeliveriesCompleted: 0,
     });
+    expect(created?.createdAt).toBeInstanceOf(Date);
   });
 
   it('upsert updates in place and preserves legacyDeliveriesCompleted when omitted from a later call', async () => {
@@ -71,5 +72,6 @@ describe.skipIf(!dbAvailable)('Prisma driver profile repository (integration)', 
       deliveriesCompleted: 1,
       legacyDeliveriesCompleted: 4,
     });
+    expect(updated?.createdAt).toBeInstanceOf(Date);
   });
 });

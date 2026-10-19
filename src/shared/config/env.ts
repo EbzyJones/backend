@@ -17,6 +17,16 @@ const baseEnvSchema = z.object({
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
+  /** Maximum size of the Prisma connection pool. Defaults to 10 so that
+   * containerized deployments with a single vCPU (where Prisma's default
+   * `num_physical_cpus * 2 + 1` = 3) don't exhaust the pool under burst
+   * traffic (see docs/DEPLOYMENT.md § Database Connection Pooling). */
+  DATABASE_POOL_SIZE: z.coerce.number().int().positive().default(10),
+
+  /** Maximum time in seconds to wait for a connection from the pool before
+   * Prisma raises P2024. */
+  DATABASE_POOL_TIMEOUT: z.coerce.number().int().positive().default(10),
+
   REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
 
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),

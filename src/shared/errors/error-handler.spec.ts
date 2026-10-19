@@ -32,11 +32,14 @@ describe('error-handler', () => {
     const mockReply = {
       status: vi.fn().mockReturnThis(),
       send: vi.fn().mockReturnThis(),
+      header: vi.fn().mockReturnThis(),
     } as unknown as FastifyReply;
     return mockReply;
   }
 
-  function createMockRequest(logFn: (level: string, arg: unknown, msg: string) => void): FastifyRequest {
+  function createMockRequest(
+    logFn: (level: string, arg: unknown, msg: string) => void,
+  ): FastifyRequest {
     const mockRequest = {
       id: 'req-123',
       log: {
@@ -171,6 +174,47 @@ describe('error-handler', () => {
     handleError(error, request, reply);
 
     const sendArg = (reply.send as any).mock.calls[0]?.[0];
+    expect(sendArg.requestId).toBe('req-123');
+  });
+
+  it('maps Prisma P2024 to HTTP 503 DATABASE_TIMEOUT with Retry-After header', () => {
+    const reply = createMockReply();
+    const request = createMockRequest(() => {});
+
+    const prismaError = {
+      code: 'P2024',
+      message: 'Timed out fetching a new connection from the pool',
+    } as any;
+
+    handleError(prismaError, request, reply);
+
+    expect((reply.status as any).mock.calls[0]?.[0]).toBe(503);
+    expect((reply.header as any).mock.calls[0]?.[0]).toBe('Retry-After');
+    expect((reply.header as any).mock.calls[0]?.[1]).toBe('1');
+
+    const sendArg = (reply.send as any).mock.calls[0]?.[0];
+    expect(sendArg.error.code).toBe('DATABASE_TIMEOUT');
+    expect(sendArg.error.message).toBe('Timed out fetching a new connection from the pool');
+    expect(sendArg.requestId).toBe('req-123');
+  });
+
+  it('maps Prisma P2000 to HTTP 400 VALUE_TOO_LONG with column details', () => {
+    const reply = createMockReply();
+    const request = createMockRequest(() => {});
+
+    const prismaError = {
+      code: 'P2000',
+      message: "The provided value for the column is too long for the column's type.",
+      meta: { column_name: 'recipient_address' },
+    } as any;
+
+    handleError(prismaError, request, reply);
+
+    expect((reply.status as any).mock.calls[0]?.[0]).toBe(400);
+
+    const sendArg = (reply.send as any).mock.calls[0]?.[0];
+    expect(sendArg.error.code).toBe('VALUE_TOO_LONG');
+    expect(sendArg.error.details).toEqual({ column_name: 'recipient_address' });
     expect(sendArg.requestId).toBe('req-123');
   });
 });

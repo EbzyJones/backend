@@ -382,6 +382,7 @@ model DriverProfile {
   /// for ranking/eligibility decisions (PHASE_1_DOMAIN_ANALYSIS.md §4, §12).
   legacyDeliveriesCompleted Int        @default(0) @map("legacy_deliveries_completed")
   registeredAt              DateTime   @map("registered_at")
+  createdAt                 DateTime   @default(now()) @map("created_at")
   updatedAt                 DateTime   @updatedAt @map("updated_at")
 
   /// Backs `analytics.getDriverTierCounts`'s `groupBy` on `tier` — see
