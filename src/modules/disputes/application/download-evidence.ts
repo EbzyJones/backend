@@ -1,11 +1,20 @@
-import type {
-  DisputeRepository,
-  EvidenceRepository,
-  EvidenceStorage,
-  UserRole,
-  WalletOwnershipRepository,
-} from '../domain/index.js';
+import type { DisputeRepository } from '../domain/dispute-repository.js';
+import type { EvidenceRepository } from '../domain/evidence-repository.js';
+import type { EvidenceStorage } from '../domain/evidence-storage.js';
+import type { WalletOwnershipRepository } from '../domain/wallet-ownership-repository.js';
+import { DisputeStatus } from '../domain/dispute-status.js';
 import { EvidenceNotFoundError, ForbiddenEvidenceAccessError } from '../domain/index.js';
+
+export interface DownloadEvidenceInput {
+  evidenceId: string;
+  requesterId: string;
+  requesterRole: string;
+}
+
+export interface DownloadEvidenceResult {
+  bytes: Buffer;
+  contentType: string;
+}
 
 export interface DownloadEvidenceDeps {
   evidenceRepository: EvidenceRepository;
@@ -14,88 +23,67 @@ export interface DownloadEvidenceDeps {
   walletOwnershipRepository: WalletOwnershipRepository;
 }
 
-export interface DownloadEvidenceInput {
-  evidenceId: string;
-  requesterId: string;
-  requesterRole: UserRole;
-}
-
-export interface DownloadEvidenceResult {
-  contentType: string;
-  bytes: Buffer;
-}
-
 /**
- * Phase 6 security review finding: this previously had no access check at
- * all beyond "is authenticated" — any registered user could download any
- * dispute's evidence file given only its id, itself discoverable via the
- * public `GET /disputes/:chainDeliveryId` (which lists every evidence
- * item's id). Now restricted to `ADMIN`, whoever uploaded the item, or
- * whoever raised the dispute it belongs to — the raiser can review
- * evidence the other party submitted, not just their own.
- *
- * Wallet-relink evidence authorization (a later security review finding):
- * the uploader check above originally re-derived "who currently owns the
- * `uploadedBy` *address*" via `WalletOwnershipRepository` on every
- * download. That's wrong for historical authorization — if the original
- * uploader's wallet link later ends and a *different* user links that same
- * address, `isOwnedByUser(newUser, sameAddress)` now returns true, and the
- * new owner would inherit access to evidence they had nothing to do with.
- * Fixed for the uploader branch by authorizing against
- * `evidence.uploadedByUserId` — the uploader's account id, captured once
- * at upload time (`uploadEvidence`) and never re-derived from current
- * wallet state — whenever it's set. Only evidence uploaded before that
- * column existed has it `null`; for that legacy case only, this falls back
- * to the old current-wallet-ownership check (a narrower, explicitly-scoped
- * residual gap for pre-existing rows, not a general fallback for new data).
- *
- * Raiser wallet-relink evidence authorization (a follow-up security review
- * finding, closing the residual gap the previous fix explicitly flagged):
- * the raiser branch previously had the identical problem — it authorized
- * against *current* wallet ownership of `dispute.raisedBy`, so a wallet
- * unlinked from the original raiser and relinked by a different user would
- * transfer raiser-based evidence access to them too. Fixed by authorizing
- * against `dispute.raisedByUserId` instead — resolved once, in
- * `sync-dispute-from-event.ts`, at the moment the dispute is first
- * observed (see that field's doc comment, prisma/schema.prisma, and
- * `DisputeRepository.upsert`'s for why it can never be reassigned
- * afterward), never re-derived from wallet state at download time.
- *
- * Unlike the uploader branch, there is deliberately **no** current-wallet-
- * ownership fallback here, not even for disputes with no `raisedByUserId`
- * (no account owned `raisedBy` when the dispute was first observed, or the
- * dispute was synced before this field existed): falling back to current
- * ownership would just be the vulnerable check wearing a different name.
- * Such a dispute's evidence remains reachable via the uploader branch and
- * `ADMIN`, just not via "I currently hold the raiser's wallet."
+ * Dispute lifecycle states in which evidence remains downloadable by the
+ * dispute participants. Once a dispute is resolved, cancelled, or closed,
+ * evidence is no longer exposed to participants — only ADMIN retains access.
  */
+const PARTICIPANT_ACCESSIBLE_STATUSES: ReadonlySet<DisputeStatus> = new Set([
+  DisputeStatus.OPEN,
+  DisputeStatus.UNDER_REVIEW,
+]);
+
 export function createDownloadEvidenceUseCase(deps: DownloadEvidenceDeps) {
+  const { evidenceRepository, evidenceStorage, disputeRepository, walletOwnershipRepository } =
+    deps;
+
   return async function downloadEvidence(
     input: DownloadEvidenceInput,
   ): Promise<DownloadEvidenceResult> {
-    const evidence = await deps.evidenceRepository.findById(input.evidenceId);
+    const evidence = await evidenceRepository.findById(input.evidenceId);
     if (!evidence) {
-      throw new EvidenceNotFoundError();
+      throw new EvidenceNotFoundError(input.evidenceId);
     }
 
-    if (input.requesterRole !== 'ADMIN') {
-      const dispute = await deps.disputeRepository.findById(evidence.disputeId);
-      const ownsUploader =
-        evidence.uploadedByUserId !== null
-          ? evidence.uploadedByUserId === input.requesterId
-          : await deps.walletOwnershipRepository.isOwnedByUser(
-              input.requesterId,
-              evidence.uploadedBy,
-            );
-      // No current-wallet-ownership fallback for a missing raisedByUserId —
-      // see this function's doc comment.
-      const ownsRaiser = dispute?.raisedByUserId === input.requesterId;
-      if (!ownsUploader && !ownsRaiser) {
-        throw new ForbiddenEvidenceAccessError();
+    const dispute = await disputeRepository.findById(evidence.disputeId);
+    if (!dispute) {
+      throw new EvidenceNotFoundError(input.evidenceId);
+    }
+
+    if (input.requesterRole === 'ADMIN') {
+      const stored = await evidenceStorage.read(evidence.storageUrl);
+      return { bytes: stored, contentType: evidence.contentType };
+    }
+
+    // Lifecycle gate: participants may only download evidence while the
+    // dispute is still open/under review. Resolved, cancelled, or closed
+    // disputes stop exposing evidence to participants.
+    if (!PARTICIPANT_ACCESSIBLE_STATUSES.has(dispute.status)) {
+      throw new ForbiddenEvidenceAccessError(input.evidenceId, input.requesterId);
+    }
+
+    const isRaiser = dispute.raisedByUserId === input.requesterId;
+    const isUploader = evidence.uploadedByUserId === input.requesterId;
+
+    let isAuthorized = isRaiser || isUploader;
+
+    if (!isAuthorized) {
+      // Legacy evidence rows (no uploadedByUserId captured at upload time)
+      // fall back to current wallet ownership of the uploadedBy address.
+      if (!evidence.uploadedByUserId) {
+        const ownsWallet = await walletOwnershipRepository.isOwnedBy(
+          evidence.uploadedBy,
+          input.requesterId,
+        );
+        isAuthorized = ownsWallet;
       }
     }
 
-    const bytes = await deps.evidenceStorage.read(evidence.storageUrl);
-    return { contentType: evidence.contentType, bytes };
+    if (!isAuthorized) {
+      throw new ForbiddenEvidenceAccessError(input.evidenceId, input.requesterId);
+    }
+
+    const stored = await evidenceStorage.read(evidence.storageUrl);
+    return { bytes: stored, contentType: evidence.contentType };
   };
 }
