@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { testAddress } from '../../../shared/testing/addresses.js';
 import { createRecordActorActivityFromEventUseCase } from './record-actor-activity-from-event.js';
 import {
   buildBlockchainEvent,
@@ -21,13 +22,13 @@ describe('recordActorActivityFromEvent', () => {
       buildBlockchainEvent({
         contractName: 'delivery',
         topic: ['delivery_created'],
-        payload: ['1', 'GSENDER'],
+        payload: ['1', testAddress('sender')],
       }),
     );
 
     expect(activityRepository.all()).toEqual([
       {
-        address: 'GSENDER',
+        address: testAddress('sender'),
         category: 'DELIVERY_CREATED',
         occurredAt: new Date('2026-01-01T00:00:00Z'),
       },
@@ -41,13 +42,13 @@ describe('recordActorActivityFromEvent', () => {
       buildBlockchainEvent({
         contractName: 'escrow',
         topic: ['escrow_released', '5'],
-        payload: ['GDRIVER', '1000', '25'],
+        payload: [testAddress('driver'), '1000', '25'],
       }),
     );
 
     expect(activityRepository.all()).toEqual([
       {
-        address: 'GDRIVER',
+        address: testAddress('driver'),
         category: 'ESCROW_RELEASED',
         occurredAt: new Date('2026-01-01T00:00:00Z'),
       },
@@ -61,13 +62,13 @@ describe('recordActorActivityFromEvent', () => {
       buildBlockchainEvent({
         contractName: 'escrow',
         topic: ['delivery_disputed', '5'],
-        payload: ['GDISPUTER'],
+        payload: [testAddress('disputer')],
       }),
     );
 
     expect(activityRepository.all()).toEqual([
       {
-        address: 'GDISPUTER',
+        address: testAddress('disputer'),
         category: 'DISPUTE_RAISED',
         occurredAt: new Date('2026-01-01T00:00:00Z'),
       },
@@ -91,7 +92,7 @@ describe('recordActorActivityFromEvent', () => {
       buildBlockchainEvent({
         contractName: 'delivery',
         topic: ['driver_assigned'],
-        payload: ['1', 'GDRIVER'],
+        payload: ['1', testAddress('driver')],
       }),
     );
 
@@ -105,7 +106,7 @@ describe('recordActorActivityFromEvent', () => {
       buildBlockchainEvent({
         contractName: 'fleet',
         topic: ['fleet_registered'],
-        payload: ['1', 'GA', 'GB'],
+        payload: ['1', testAddress('a'), testAddress('b')],
       }),
     );
 

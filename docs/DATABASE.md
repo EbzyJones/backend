@@ -55,7 +55,8 @@ migration rather than kept — that's what removed the former `deliveries_status
 _idx`, which was fully covered by `deliveries(status, created_at_chain desc)`
 and would otherwise carry duplicate write/maintenance cost for no read benefit.
 `deliveries`'s `sender_address`, `recipient_address`, and `driver_address`
-indexes are kept because they are filter-only columns with no composite
+indexes, as well as `escrows`'s `sender_address` and `recipient_address`
+indexes (#386), are kept because they are filter-only columns with no composite
 covering them.
 
 ## Migrations

@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  EVENT_DISPATCH_CONCURRENCY,
   onBlockchainEvent,
   publishBlockchainEvent,
+  subscribeBlockchainEventHandler,
   type BlockchainEventEnvelope,
 } from './index.js';
+import { eventSubscriberErrorsTotal, registry } from '../metrics/index.js';
+import type { Logger } from '../logger/index.js';
 
 function buildEvent(overrides: Partial<BlockchainEventEnvelope> = {}): BlockchainEventEnvelope {
   return {
@@ -93,5 +97,130 @@ describe('blockchain event bus', () => {
 
     publishBlockchainEvent(buildEvent());
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('increments event_subscriber_errors_total when a registered handler throws', async () => {
+    const log = { error: vi.fn() } as unknown as Logger;
+    const errorMessage = 'spec: handler failed';
+    cleanup.push(
+      subscribeBlockchainEventHandler(
+        async () => {
+          throw new Error('DB down');
+        },
+        log,
+        errorMessage,
+      ),
+    );
+
+    publishBlockchainEvent(buildEvent({ rpcEventId: 'metric-1' }));
+    // The wrapper's .catch runs on a microtask — flush before asserting.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const metric = await eventSubscriberErrorsTotal.get();
+    const series = metric.values.find(
+      (value) =>
+        value.labels.subscriber === errorMessage &&
+        value.labels.contract === 'escrow' &&
+        value.labels.event === 'something_happened',
+    );
+    expect(series?.value).toBe(1);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error) }),
+      errorMessage,
+    );
+  });
+
+  it('leaves event_subscriber_errors_total untouched when a handler succeeds', async () => {
+    const log = { error: vi.fn() } as unknown as Logger;
+    const errorMessage = 'spec: handler succeeded';
+    cleanup.push(subscribeBlockchainEventHandler(async () => 'ok', log, errorMessage));
+
+    publishBlockchainEvent(buildEvent({ rpcEventId: 'metric-2' }));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const metric = await eventSubscriberErrorsTotal.get();
+    const series = metric.values.find((value) => value.labels.subscriber === errorMessage);
+    expect(series).toBeUndefined();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('registers event_subscriber_errors_total for the /metrics endpoint to export', async () => {
+    expect(registry.getSingleMetric('event_subscriber_errors_total')).toBeDefined();
+    expect(await registry.metrics()).toContain('# HELP event_subscriber_errors_total');
+    expect(await registry.metrics()).toContain('# TYPE event_subscriber_errors_total counter');
+  });
+
+  it('resolves publish only after an async subscriber has finished', async () => {
+    let finished = false;
+    subscribe(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            finished = true;
+            resolve();
+          }, 5);
+        }),
+    );
+
+    await publishBlockchainEvent(buildEvent());
+
+    expect(finished).toBe(true);
+  });
+
+  it('bounds concurrent subscriber executions across 500 rapidly-published events', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let completed = 0;
+    subscribe(() => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          active -= 1;
+          completed += 1;
+          resolve();
+        }, 1);
+      });
+    });
+
+    const publishes = Array.from({ length: 500 }, (_, i) =>
+      publishBlockchainEvent(buildEvent({ rpcEventId: `evt-${i}` })),
+    );
+    await Promise.all(publishes);
+
+    // The whole point of the backpressure work (#349): never more than the
+    // configured pool size in flight, yet all 500 still complete.
+    expect(maxActive).toBeLessThanOrEqual(EVENT_DISPATCH_CONCURRENCY);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(completed).toBe(500);
+    expect(active).toBe(0);
+  });
+
+  it('keeps invoking synchronous subscribers before publish returns', () => {
+    const handler = vi.fn();
+    subscribe(handler);
+
+    publishBlockchainEvent(buildEvent());
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts a rejecting raw listener toward event_subscriber_errors_total instead of failing the publish', async () => {
+    subscribe(() => Promise.reject(new Error('raw listener failed')));
+
+    await expect(
+      publishBlockchainEvent(
+        buildEvent({ rpcEventId: 'raw-failure', topic: ['raw_listener_probe'] }),
+      ),
+    ).resolves.toBeUndefined();
+
+    const metric = await eventSubscriberErrorsTotal.get();
+    const series = metric.values.find(
+      (value) =>
+        value.labels.subscriber === 'onBlockchainEvent' &&
+        value.labels.event === 'raw_listener_probe',
+    );
+    expect(series?.value).toBe(1);
   });
 });

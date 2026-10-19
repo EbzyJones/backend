@@ -1,4 +1,9 @@
-export { createListOpenDisputesUseCase, type ListOpenDisputesDeps } from './list-open-disputes.js';
+export {
+  createListOpenDisputesUseCase,
+  type ListOpenDisputesDeps,
+  type ListOpenDisputesInput,
+  type ListOpenDisputesResult,
+} from './list-open-disputes.js';
 export {
   createUpdateUserRoleUseCase,
   type UpdateUserRoleDeps,

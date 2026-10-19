@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { testAddress } from '../../../shared/testing/addresses.js';
 import { createSyncDisputeFromEventUseCase } from './sync-dispute-from-event.js';
 import {
   buildDispute,
   buildDisputeResolutionEvent,
   buildEscrowDisputeEvent,
+  createFakeDisputeEscrowStateReader,
   createFakeWalletOwnershipRepository,
   createInMemoryDisputeRepository,
 } from './__fixtures__/fakes.js';
@@ -11,17 +13,24 @@ import {
 function setup() {
   const disputeRepository = createInMemoryDisputeRepository();
   const walletOwnershipRepository = createFakeWalletOwnershipRepository();
-  // `escrowStateReader` is still not provided here (pre-existing, unrelated
-  // to B2.1 — see the "escrow dispute_resolved is intentionally not
-  // handled" test below, which already fails against this same gap).
-  // `walletOwnershipRepository` is now required too (B2.1) — every test in
-  // this file that reaches `dispute_raised`/`delivery_disputed` needs it,
-  // not just the new ones added for this fix.
+  // `escrowStateReader` is the supplementary `get_escrow` read
+  // `handleEscrowOnlyResolution` uses to disambiguate the otherwise
+  // ambiguous `escrow.dispute_resolved` event (see sync-dispute-from-event.ts's
+  // header comment). Seeded per-test below; an unseeded id throws, so a test
+  // that reaches that fallback without declaring its expected escrow state
+  // fails loudly rather than silently passing on `undefined` (#336).
+  const escrowStateReader = createFakeDisputeEscrowStateReader();
   const syncDisputeFromEvent = createSyncDisputeFromEventUseCase({
     disputeRepository,
+    escrowStateReader,
     walletOwnershipRepository,
   });
-  return { disputeRepository, walletOwnershipRepository, syncDisputeFromEvent };
+  return {
+    disputeRepository,
+    escrowStateReader,
+    walletOwnershipRepository,
+    syncDisputeFromEvent,
+  };
 }
 
 describe('syncDisputeFromEvent', () => {
@@ -40,20 +49,27 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_raised', '["42"]'],
-        payload: ['GRAISER', ['42']],
+        payload: [testAddress('raiser'), ['42']],
         closedAt,
       }),
     );
 
     const stored = await disputeRepository.findByChainDeliveryId(42n);
-    expect(stored).toMatchObject({ status: 'OPEN', raisedBy: 'GRAISER', raisedAt: closedAt });
+    expect(stored).toMatchObject({
+      status: 'OPEN',
+      raisedBy: testAddress('raiser'),
+      raisedAt: closedAt,
+    });
   });
 
   it('ignores dispute_raised when topic[1] is not a one-element tuple (bare u64, wrong convention)', async () => {
     const { disputeRepository, syncDisputeFromEvent } = setup();
 
     await syncDisputeFromEvent(
-      buildDisputeResolutionEvent({ topic: ['dispute_raised', '42'], payload: ['GRAISER', '42'] }),
+      buildDisputeResolutionEvent({
+        topic: ['dispute_raised', '42'],
+        payload: [testAddress('raiser'), '42'],
+      }),
     );
 
     expect(await disputeRepository.findByChainDeliveryId(42n)).toBeNull();
@@ -66,7 +82,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['evidence_added', '["1"]'],
-        payload: ['GSENDER', ['1'], 'aabbcc'],
+        payload: [testAddress('sender'), ['1'], 'aabbcc'],
       }),
     );
 
@@ -77,14 +93,14 @@ describe('syncDisputeFromEvent', () => {
   it('dispute_resolved_refund: sets status RESOLVED_REFUND, resolvedBy, resolvedAt', async () => {
     const { disputeRepository, syncDisputeFromEvent } = setup();
     disputeRepository.seed(
-      buildDispute({ chainDeliveryId: 1n, status: 'OPEN', raisedBy: 'GRAISER' }),
+      buildDispute({ chainDeliveryId: 1n, status: 'OPEN', raisedBy: testAddress('raiser') }),
     );
     const resolvedAt = new Date('2026-02-01T00:00:00Z');
 
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_resolved_refund', '["1"]'],
-        payload: ['GADMIN', ['1'], 'GDRIVER', 10],
+        payload: [testAddress('admin'), ['1'], testAddress('driver'), 10],
         closedAt: resolvedAt,
       }),
     );
@@ -92,9 +108,9 @@ describe('syncDisputeFromEvent', () => {
     const stored = await disputeRepository.findByChainDeliveryId(1n);
     expect(stored).toMatchObject({
       status: 'RESOLVED_REFUND',
-      resolvedBy: 'GADMIN',
+      resolvedBy: testAddress('admin'),
       resolvedAt,
-      raisedBy: 'GRAISER',
+      raisedBy: testAddress('raiser'),
     });
   });
 
@@ -105,7 +121,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_resolved_split', '["1"]'],
-        payload: ['GADMIN', ['1']],
+        payload: [testAddress('admin'), ['1']],
       }),
     );
 
@@ -119,7 +135,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_resolved_payout', '["1"]'],
-        payload: ['GADMIN', ['1']],
+        payload: [testAddress('admin'), ['1']],
       }),
     );
 
@@ -135,18 +151,96 @@ describe('syncDisputeFromEvent', () => {
     );
 
     const stored = await disputeRepository.findByChainDeliveryId(7n);
-    expect(stored).toMatchObject({ status: 'OPEN', raisedBy: 'GDISPUTER', raisedAt: closedAt });
+    expect(stored).toMatchObject({
+      status: 'OPEN',
+      raisedBy: testAddress('disputer'),
+      raisedAt: closedAt,
+    });
   });
 
-  it('escrow dispute_resolved is intentionally not handled — ambiguous outcome, no fallback read here', async () => {
-    const { disputeRepository, syncDisputeFromEvent } = setup();
+  it('escrow dispute_resolved: leaves an OPEN dispute OPEN when the escrow has not settled (LOCKED)', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
     disputeRepository.seed(buildDispute({ chainDeliveryId: 1n, status: 'OPEN' }));
+    escrowStateReader.seed(1n, 'LOCKED');
+
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: [testAddress('admin'), testAddress('admin')],
+      }),
+    );
+
+    expect((await disputeRepository.findByChainDeliveryId(1n))?.status).toBe('OPEN');
+  });
+
+  it('escrow dispute_resolved: resolves an OPEN dispute to RESOLVED_PAYOUT when the escrow was released', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
+    disputeRepository.seed(
+      buildDispute({ chainDeliveryId: 1n, status: 'OPEN', raisedBy: 'GDISPUTER' }),
+    );
+    escrowStateReader.seed(1n, 'RELEASED');
+    const resolvedAt = new Date('2026-02-02T00:00:00Z');
+
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: ['GADMIN', 'GADMIN'],
+        closedAt: resolvedAt,
+      }),
+    );
+
+    const stored = await disputeRepository.findByChainDeliveryId(1n);
+    expect(stored).toMatchObject({
+      status: 'RESOLVED_PAYOUT',
+      raisedBy: 'GDISPUTER',
+      resolvedAt,
+    });
+  });
+
+  it('escrow dispute_resolved: resolves an OPEN dispute to RESOLVED_REFUND when the escrow was refunded', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
+    disputeRepository.seed(buildDispute({ chainDeliveryId: 1n, status: 'OPEN' }));
+    escrowStateReader.seed(1n, 'REFUNDED');
+    const resolvedAt = new Date('2026-02-03T00:00:00Z');
+
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: ['GADMIN', 'GADMIN'],
+        closedAt: resolvedAt,
+      }),
+    );
+
+    const stored = await disputeRepository.findByChainDeliveryId(1n);
+    expect(stored).toMatchObject({ status: 'RESOLVED_REFUND', resolvedAt });
+  });
+
+  it('escrow dispute_resolved: never overwrites an already-recorded resolution — a prior Layer B outcome stays authoritative', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
+    // Already resolved via Layer B; the escrow now reads RELEASED, which a
+    // naive re-derivation would flip to RESOLVED_PAYOUT.
+    disputeRepository.seed(
+      buildDispute({ chainDeliveryId: 1n, status: 'RESOLVED_REFUND', raisedBy: 'GDISPUTER' }),
+    );
+    escrowStateReader.seed(1n, 'RELEASED');
 
     await syncDisputeFromEvent(
       buildEscrowDisputeEvent({ topic: ['dispute_resolved', '1'], payload: ['GADMIN', 'GADMIN'] }),
     );
 
-    expect((await disputeRepository.findByChainDeliveryId(1n))?.status).toBe('OPEN');
+    expect((await disputeRepository.findByChainDeliveryId(1n))?.status).toBe('RESOLVED_REFUND');
+  });
+
+  it('escrow dispute_resolved: skips when no dispute was ever raised (out-of-order event), without consulting the escrow reader', async () => {
+    const { disputeRepository, syncDisputeFromEvent } = setup();
+    // Deliberately no `escrowStateReader.seed` for this id: the no-prior-raise
+    // guard must return before the supplementary read, so consulting the
+    // (unseeded, therefore throwing) fake would fail this test.
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({ topic: ['dispute_resolved', '1'], payload: ['GADMIN', 'GADMIN'] }),
+    );
+
+    expect(await disputeRepository.findByChainDeliveryId(1n)).toBeNull();
   });
 
   it('dispute_resolved_split: records senderShareBps from the event payload (issue #40)', async () => {
@@ -157,7 +251,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_resolved_split', '["2"]'],
-        payload: ['GADMIN', ['2'], 7500],
+        payload: [testAddress('admin'), ['2'], 7500],
         closedAt: resolvedAt,
       }),
     );
@@ -174,7 +268,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_resolved_split', '["3"]'],
-        payload: ['GADMIN', ['3'], 10_001],
+        payload: [testAddress('admin'), ['3'], 10_001],
       }),
     );
 
@@ -188,7 +282,7 @@ describe('syncDisputeFromEvent', () => {
     disputeRepository.seed(buildDispute({ chainDeliveryId: 4n, status: 'OPEN' }));
     const event = buildDisputeResolutionEvent({
       topic: ['dispute_resolved_split', '["4"]'],
-      payload: ['GADMIN', ['4'], 2500],
+      payload: [testAddress('admin'), ['4'], 2500],
     });
 
     await syncDisputeFromEvent(event);
@@ -204,17 +298,17 @@ describe('syncDisputeFromEvent', () => {
 
   it('dispute_raised: captures raisedByUserId from whoever currently owns the address, on first creation', async () => {
     const { disputeRepository, walletOwnershipRepository, syncDisputeFromEvent } = setup();
-    walletOwnershipRepository.seed('raiser-user', 'GRAISER5');
+    walletOwnershipRepository.seed('raiser-user', testAddress('raiser-5'));
 
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_raised', '["5"]'],
-        payload: ['GRAISER5', ['5']],
+        payload: [testAddress('raiser-5'), ['5']],
       }),
     );
 
     const stored = await disputeRepository.findByChainDeliveryId(5n);
-    expect(stored?.raisedBy).toBe('GRAISER5');
+    expect(stored?.raisedBy).toBe(testAddress('raiser-5'));
     expect(stored?.raisedByUserId).toBe('raiser-user');
   });
 
@@ -224,7 +318,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_raised', '["6"]'],
-        payload: ['GUNLINKED', ['6']],
+        payload: [testAddress('unlinked'), ['6']],
       }),
     );
 
@@ -234,10 +328,10 @@ describe('syncDisputeFromEvent', () => {
 
   it('dispute_raised: replaying the event after the wallet was relinked to someone else does not reassign raisedByUserId', async () => {
     const { disputeRepository, walletOwnershipRepository, syncDisputeFromEvent } = setup();
-    walletOwnershipRepository.seed('original-raiser', 'GRAISER7');
+    walletOwnershipRepository.seed('original-raiser', testAddress('raiser-7'));
     const event = buildDisputeResolutionEvent({
       topic: ['dispute_raised', '["7"]'],
-      payload: ['GRAISER7', ['7']],
+      payload: [testAddress('raiser-7'), ['7']],
     });
 
     await syncDisputeFromEvent(event);
@@ -245,7 +339,7 @@ describe('syncDisputeFromEvent', () => {
     // account before the (checkpointed/replayed) event is processed again —
     // the same fake Map, so seeding again simply overwrites the reverse
     // lookup, exactly like a real relink would in the wallet_addresses table.
-    walletOwnershipRepository.seed('new-owner', 'GRAISER7');
+    walletOwnershipRepository.seed('new-owner', testAddress('raiser-7'));
     await syncDisputeFromEvent(event);
 
     const stored = await disputeRepository.findByChainDeliveryId(7n);
@@ -262,18 +356,22 @@ describe('syncDisputeFromEvent', () => {
     // different account. This is not a replay of an existing row; no
     // Dispute row exists yet when this event is processed.
     const raisedAt = new Date('2026-01-01T00:00:00Z'); // t0: actual on-chain raise time
-    walletOwnershipRepository.seed('new-owner', 'GRAISER10', new Date('2026-01-02T00:00:00Z')); // linked AFTER t0
+    walletOwnershipRepository.seed(
+      'new-owner',
+      testAddress('raiser-10'),
+      new Date('2026-01-02T00:00:00Z'),
+    ); // linked AFTER t0
 
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_raised', '["10"]'],
-        payload: ['GRAISER10', ['10']],
+        payload: [testAddress('raiser-10'), ['10']],
         closedAt: raisedAt,
       }),
     );
 
     const stored = await disputeRepository.findByChainDeliveryId(10n);
-    expect(stored?.raisedBy).toBe('GRAISER10');
+    expect(stored?.raisedBy).toBe(testAddress('raiser-10'));
     // Must NOT be 'new-owner' — they had nothing to do with raising this
     // dispute, they just happened to be the address's current owner by the
     // time the backend got around to processing the event.
@@ -286,14 +384,14 @@ describe('syncDisputeFromEvent', () => {
     // Linked well before the dispute was raised — the legitimate case.
     walletOwnershipRepository.seed(
       'original-raiser',
-      'GRAISER11',
+      testAddress('raiser-11'),
       new Date('2026-01-01T00:00:00Z'),
     );
 
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_raised', '["11"]'],
-        payload: ['GRAISER11', ['11']],
+        payload: [testAddress('raiser-11'), ['11']],
         closedAt: raisedAt,
       }),
     );
@@ -304,12 +402,12 @@ describe('syncDisputeFromEvent', () => {
 
   it('escrow delivery_disputed: also captures raisedByUserId on first creation (Layer A alone)', async () => {
     const { disputeRepository, walletOwnershipRepository, syncDisputeFromEvent } = setup();
-    walletOwnershipRepository.seed('layer-a-raiser', 'GDISPUTER8');
+    walletOwnershipRepository.seed('layer-a-raiser', testAddress('disputer-8'));
 
     await syncDisputeFromEvent(
       buildEscrowDisputeEvent({
         topic: ['delivery_disputed', '8'],
-        payload: ['GDISPUTER8', '1700000000'],
+        payload: [testAddress('disputer-8'), '1700000000'],
       }),
     );
 
@@ -324,12 +422,12 @@ describe('syncDisputeFromEvent', () => {
     );
     // Even if the raiser's wallet is now owned by someone else by the time
     // a resolution event arrives, resolving must never touch raisedByUserId.
-    walletOwnershipRepository.seed('new-owner', 'GRAISER9');
+    walletOwnershipRepository.seed('new-owner', testAddress('raiser-9'));
 
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_resolved_payout', '["9"]'],
-        payload: ['GADMIN', ['9']],
+        payload: [testAddress('admin'), ['9']],
       }),
     );
 
@@ -346,7 +444,7 @@ describe('syncDisputeFromEvent', () => {
       buildDispute({
         chainDeliveryId: 10n,
         status: 'RESOLVED_PAYOUT',
-        resolvedBy: 'GADMIN',
+        resolvedBy: testAddress('admin'),
         resolvedAt: new Date('2026-03-01T00:00:00Z'),
       }),
     );
@@ -354,7 +452,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_raised', '["10"]'],
-        payload: ['GSENDER', ['10']],
+        payload: [testAddress('sender'), ['10']],
         closedAt: new Date('2026-02-01T00:00:00Z'),
       }),
     );
@@ -370,7 +468,7 @@ describe('syncDisputeFromEvent', () => {
       buildDispute({
         chainDeliveryId: 11n,
         status: 'RESOLVED_REFUND',
-        resolvedBy: 'GADMIN',
+        resolvedBy: testAddress('admin'),
         resolvedAt: new Date('2026-03-01T00:00:00Z'),
       }),
     );
@@ -378,7 +476,7 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildEscrowDisputeEvent({
         topic: ['delivery_disputed', '11'],
-        payload: ['GSENDER', '11'],
+        payload: [testAddress('sender'), '11'],
         closedAt: new Date('2026-02-01T00:00:00Z'),
       }),
     );
@@ -391,7 +489,7 @@ describe('syncDisputeFromEvent', () => {
     const { disputeRepository, syncDisputeFromEvent } = setup();
     const event = buildDisputeResolutionEvent({
       topic: ['dispute_raised', '["12"]'],
-      payload: ['GSENDER', ['12']],
+      payload: [testAddress('sender'), ['12']],
     });
 
     await syncDisputeFromEvent(event);
@@ -409,13 +507,13 @@ describe('syncDisputeFromEvent', () => {
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_resolved_refund', '["13"]'],
-        payload: ['GADMIN', ['13']],
+        payload: [testAddress('admin'), ['13']],
       }),
     );
     await syncDisputeFromEvent(
       buildDisputeResolutionEvent({
         topic: ['dispute_raised', '["13"]'],
-        payload: ['GSENDER', ['13']],
+        payload: [testAddress('sender'), ['13']],
       }),
     );
 

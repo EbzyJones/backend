@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
   ChainDeliveryRecord,
@@ -89,8 +90,8 @@ export function buildChainDeliveryRecord(
 ): ChainDeliveryRecord {
   return {
     chainDeliveryId: 1n,
-    senderAddress: 'GSENDER',
-    recipientAddress: 'GRECIPIENT',
+    senderAddress: testAddress('sender'),
+    recipientAddress: testAddress('recipient'),
     driverAddress: null,
     status: 'PENDING',
     origin: 'Lagos',
@@ -119,7 +120,7 @@ export function buildDeliveryEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['delivery_created'],
-    payload: ['1', 'GSENDER'],
+    payload: ['1', testAddress('sender')],
     closedAt: new Date(),
     ...overrides,
   };

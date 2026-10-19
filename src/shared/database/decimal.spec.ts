@@ -21,4 +21,22 @@ describe('decimalToBigInt', () => {
     const i128Max = '170141183460469231731687303715884105727';
     expect(decimalToBigInt(new Prisma.Decimal(i128Max))).toBe(BigInt(i128Max));
   });
+
+  it('converts an integer-valued Decimal that carries a trailing decimal zero', () => {
+    expect(decimalToBigInt(new Prisma.Decimal('100.0'))).toBe(100n);
+  });
+
+  // Issue #366: token amounts are integer base units on-chain — a fractional
+  // Decimal means an upstream calculation error and must never be rounded
+  // away silently (that would move real funds by an untracked amount).
+  it('throws a TypeError for a fractional Decimal instead of silently rounding', () => {
+    expect(() => decimalToBigInt(new Prisma.Decimal('100.5'))).toThrow(TypeError);
+    expect(() => decimalToBigInt(new Prisma.Decimal('100.99'))).toThrow(
+      /non-integer Decimal.*100\.99/,
+    );
+  });
+
+  it('throws for a negative fractional Decimal too', () => {
+    expect(() => decimalToBigInt(new Prisma.Decimal('-0.5'))).toThrow(TypeError);
+  });
 });

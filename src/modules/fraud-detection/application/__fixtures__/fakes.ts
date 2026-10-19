@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type { ActorActivityCategory, ActorActivityRepository, Clock } from '../../domain/index.js';
 
@@ -51,7 +52,7 @@ export function buildBlockchainEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['delivery_created'],
-    payload: ['1', 'GSENDER'],
+    payload: ['1', testAddress('sender')],
     closedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
