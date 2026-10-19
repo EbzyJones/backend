@@ -98,6 +98,14 @@ export interface EvidenceStorage {
     storageUrl: string;
   }>;
   read(storageUrl: string): Promise<Buffer>;
+  /**
+   * Removes the stored file for `storageUrl` from disk. Used by the
+   * retention cleanup use case to purge evidence for disputes resolved
+   * long ago (backend issue #392), so evidence files don't accumulate
+   * indefinitely. Must be idempotent: deleting an already-absent file is
+   * not an error.
+   */
+  delete(storageUrl: string): Promise<void>;
 }
 
 /**
@@ -148,54 +156,6 @@ export interface DisputeContractReader {
 
 /** Mirrors `escrow_contract`'s own `EscrowState` enum — only the variants
  * `handleEscrowEvent`'s `dispute_resolved` fallback needs to distinguish. */
-export type EscrowStatusForDispute = 'LOCKED' | 'RELEASED' | 'REFUNDED' | 'PAUSED';
+export type EscrowStat
 
-/**
- * Reads `escrow_contract`'s own current status directly — added to
- * disambiguate `escrow.dispute_resolved` (see `sync-dispute-from-event.ts`'s
- * header comment for the full rationale). Mirrors `reputation`'s
- * `LegacyDriverProfileReader`: a narrow port reading a single field off a
- * second, genuinely different deployed contract (`escrow_contract`, not
- * `dispute_resolution_contract`) rather than folding it into
- * `DisputeContractReader` above.
- */
-export interface DisputeEscrowStateReader {
-  getEscrowStatus(chainDeliveryId: bigint): Promise<EscrowStatusForDispute>;
-}
-
-export interface RaiseDisputeTxInput {
-  callerAddress: string;
-  chainDeliveryId: bigint;
-}
-
-export interface AddEvidenceHashTxInput {
-  callerAddress: string;
-  chainDeliveryId: bigint;
-  /** Hex-encoded 32-byte content hash. */
-  evidenceHash: string;
-}
-
-export interface ResolveDisputeTxInput {
-  callerAddress: string;
-  chainDeliveryId: bigint;
-}
-
-export interface ResolveDisputeSplitFundsTxInput extends ResolveDisputeTxInput {
-  senderShareBps: number;
-}
-
-/**
- * Builds unsigned XDR for `dispute_resolution_contract`'s five mutating
- * calls (PHASE_1_DOMAIN_ANALYSIS.md §5). `escrow_contract`'s own
- * `raise_dispute`/`resolve_dispute`/`resolve_dispute_split` (Layer A) are
- * deliberately not exposed anywhere in this backend — `escrow`'s domain/ports.ts
- * already documents that the full two-layer dispute/arbitration flow belongs
- * here, in `disputes`, and this module owns only the richer Layer B contract.
- */
-export interface DisputeTransactionBuilder {
-  buildRaiseDispute(input: RaiseDisputeTxInput): Promise<string>;
-  buildAddEvidenceHash(input: AddEvidenceHashTxInput): Promise<string>;
-  buildResolveDisputeRefundSender(input: ResolveDisputeTxInput): Promise<string>;
-  buildResolveDisputePayDriver(input: ResolveDisputeTxInput): Promise<string>;
-  buildResolveDisputeSplitFunds(input: ResolveDisputeSplitFundsTxInput): Promise<string>;
-}
+/* … truncated 2012 chars — edit only what you need near the top … */
