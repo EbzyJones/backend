@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const {
+  signalEvents,
+}: { signalEvents: string[] } = require('close-with-grace/events/signal.events');
 import {
   BACKLOG,
   DISCONNECT_TIMEOUT_MS,
@@ -100,6 +106,19 @@ describe('server configuration and shutdown', () => {
       await expect(withTimeout(() => new Promise(() => {}), 50, 'Database')).rejects.toThrow(
         'Database disconnect timed out after 50ms',
       );
+    });
+  });
+
+  // `src/server.ts` and `src/workers/index.ts` pass no `skip` list to
+  // `close-with-grace`, so its default signal set applies. This pins that
+  // contract: nodemon / `tsx --watch` emit SIGUSR2 on dev reloads (#359),
+  // which must trigger the same graceful teardown (Prisma `$disconnect`,
+  // Redis/queue `quit`) as SIGINT/SIGTERM instead of killing the process.
+  describe('graceful shutdown signals (#359)', () => {
+    it('listens for SIGUSR2 alongside SIGINT and SIGTERM', () => {
+      expect(signalEvents).toContain('SIGUSR2');
+      expect(signalEvents).toContain('SIGINT');
+      expect(signalEvents).toContain('SIGTERM');
     });
   });
 });

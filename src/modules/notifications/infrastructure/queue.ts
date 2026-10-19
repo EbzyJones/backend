@@ -19,7 +19,15 @@ export function createNotificationJobScheduler(): NotificationJobScheduler {
   return {
     async enqueueDelivery(notificationId) {
       const data: SendNotificationJobData = { notificationId };
-      await queue.add('send-notification', data, { jobId: `send-${notificationId}` });
+      // Explicit per-job retry policy (mirrors the queue-level
+      // `defaultJobOptions` in `src/shared/queue/queues.ts`): transient
+      // email-provider failures (429 rate limits, 503 outages) back off
+      // exponentially instead of retrying immediately or not at all (#358).
+      await queue.add('send-notification', data, {
+        jobId: `send-${notificationId}`,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 2_000 },
+      });
     },
   };
 }
