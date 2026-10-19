@@ -4,8 +4,10 @@ import type {
   ChainDisputeCase,
   Dispute,
   DisputeContractReader,
+  DisputeEscrowStateReader,
   DisputeRepository,
   DisputeTransactionBuilder,
+  EscrowStatusForDispute,
   Evidence,
   EvidenceRepository,
   EvidenceStorage,
@@ -119,6 +121,24 @@ export function createFakeDisputeContractReader(): DisputeContractReader & {
       const record = records.get(chainDeliveryId.toString());
       if (!record) throw new Error(`No fake chain case seeded for ${chainDeliveryId.toString()}`);
       return record;
+    },
+  };
+}
+
+export function createFakeDisputeEscrowStateReader(): DisputeEscrowStateReader & {
+  seed(chainDeliveryId: bigint, status: EscrowStatusForDispute): void;
+} {
+  const statuses = new Map<string, EscrowStatusForDispute>();
+  return {
+    seed(chainDeliveryId, status) {
+      statuses.set(chainDeliveryId.toString(), status);
+    },
+    async getEscrowStatus(chainDeliveryId) {
+      const status = statuses.get(chainDeliveryId.toString());
+      if (!status) {
+        throw new Error(`No fake escrow status seeded for ${chainDeliveryId.toString()}`);
+      }
+      return status;
     },
   };
 }
