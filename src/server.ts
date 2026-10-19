@@ -4,29 +4,11 @@ import { logger } from './shared/logger/index.js';
 import { disconnectPrisma } from './shared/database/index.js';
 import { disconnectRedis } from './shared/cache/index.js';
 import { disconnectQueueConnection, closeAllQueues } from './shared/queue/index.js';
+import { withTimeout } from './shared/shutdown/index.js';
 
 export const BACKLOG = 511;
 export const SHUTDOWN_TIMEOUT_MS = 10_000;
 export const DISCONNECT_TIMEOUT_MS = 3_000;
-
-export async function withTimeout<T>(
-  promiseFn: () => Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${label} disconnect timed out after ${timeoutMs}ms`)),
-      timeoutMs,
-    );
-  });
-  try {
-    return await Promise.race([promiseFn(), timeoutPromise]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 export interface ShutdownStepsDeps {
   app: { close: () => Promise<unknown> };
