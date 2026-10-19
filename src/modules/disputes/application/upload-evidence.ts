@@ -10,6 +10,7 @@ import {
   DisputeNotFoundError,
   DisputeNotOpenError,
   ForbiddenEvidenceUploadError,
+  ValidationError,
 } from '../domain/index.js';
 
 export interface UploadEvidenceDeps {
@@ -32,6 +33,48 @@ export interface UploadEvidenceInput {
 
 export interface UploadEvidenceResult {
   evidence: Evidence;
+}
+
+/**
+ * Magic byte signatures for the evidence content types this module accepts.
+ * Each entry is a list of acceptable byte prefixes for that declared MIME
+ * type — a file must match at least one of them. Used to reject files whose
+ * actual content doesn't match the client-declared `contentType` (issue #394:
+ * relying on the declared MIME type alone enables file format spoofing).
+ */
+const MAGIC_BYTES: Record<string, readonly (readonly number[])[]> = {
+  'image/jpeg': [[0xff, 0xd8, 0xff]],
+  'image/png': [[0x89, 0x50, 0x4e, 0x47]],
+  'application/pdf': [[0x25, 0x50, 0x44, 0x46]], // %PDF
+  'audio/mpeg': [
+    [0x49, 0x44, 0x33], // ID3
+    [0xff, 0xfb],
+  ],
+  'video/mp4': [[0x66, 0x74, 0x79, 0x70]], // ftyp
+};
+
+/**
+ * Verifies the first 16 bytes of `bytes` against the known magic byte
+ * signatures for `contentType`. Throws `ValidationError` when the content
+ * does not match the declared type. Content types without a registered
+ * signature are left to the schema-level allowlist check.
+ */
+function assertMagicBytesMatch(contentType: string, bytes: Buffer): void {
+  const signatures = MAGIC_BYTES[contentType];
+  if (!signatures) {
+    return;
+  }
+
+  const header = bytes.subarray(0, 16);
+  const matches = signatures.some(
+    (signature) =>
+      header.length >= signature.length &&
+      signature.every((byte, index) => header[index] === byte),
+  );
+
+  if (!matches) {
+    throw new ValidationError('File content does not match declared contentType');
+  }
 }
 
 /**
@@ -70,6 +113,10 @@ export function createUploadEvidenceUseCase(deps: UploadEvidenceDeps) {
     if (!ownsUploader) {
       throw new ForbiddenEvidenceUploadError();
     }
+
+    // Reject files whose actual content doesn't match the declared MIME type
+    // before anything is hashed or persisted (issue #394).
+    assertMagicBytesMatch(input.contentType, input.bytes);
 
     const hash = createHash('sha256').update(input.bytes).digest('hex');
     const { storageUrl } = await deps.evidenceStorage.save({
