@@ -1,5 +1,7 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { PrismaClient } from '@prisma/client';
+import { getConfig } from '../../shared/config/index.js';
+import { smtpSettingsFromEnv } from '../../shared/smtp/index.js';
 import {
   createLoginUseCase,
   createLogoutUseCase,
@@ -12,9 +14,9 @@ import {
 import {
   createBcryptPasswordHasher,
   createJwtTokenService,
-  createLoggerMailer,
   createPrismaRefreshTokenRepository,
   createPrismaUserRepository,
+  selectMailer,
 } from './infrastructure/index.js';
 import { createAuthRoutes } from './interface/routes.js';
 
@@ -26,11 +28,15 @@ import { createAuthRoutes } from './interface/routes.js';
  * downstream of here only ever sees the ports/use cases it actually needs.
  */
 export function createAuthModule(prisma: PrismaClient): FastifyPluginAsyncZod {
+  const config = getConfig();
   const userRepository = createPrismaUserRepository(prisma);
   const refreshTokenRepository = createPrismaRefreshTokenRepository(prisma);
   const passwordHasher = createBcryptPasswordHasher();
   const tokenService = createJwtTokenService();
-  const mailer = createLoggerMailer();
+  // Selects the configured provider: `logger` in dev/test, the real
+  // SMTP-backed mailer for smtp/sendgrid/ses — and, per selectMailer's
+  // contract, a loud boot failure if production is still on `logger`.
+  const mailer = selectMailer(config.NODE_ENV, config.MAIL_PROVIDER, smtpSettingsFromEnv(config));
 
   const useCases = {
     registerUser: createRegisterUserUseCase({

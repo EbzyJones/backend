@@ -5,6 +5,7 @@ export {
   ForbiddenError,
   NotFoundError,
   ConflictError,
+  InsufficientFundsError,
   BlockchainError,
   InternalError,
 } from './app-error.js';

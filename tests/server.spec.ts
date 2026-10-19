@@ -10,8 +10,8 @@ import {
   DISCONNECT_TIMEOUT_MS,
   SHUTDOWN_TIMEOUT_MS,
   executeShutdownSteps,
-  withTimeout,
 } from '../src/server.js';
+import { withTimeout } from '../src/shared/shutdown/index.js';
 
 describe('server configuration and shutdown', () => {
   it('defines the standard backlog limit of 511', () => {

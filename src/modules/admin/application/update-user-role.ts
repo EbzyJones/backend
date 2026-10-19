@@ -1,4 +1,9 @@
-import type { AdminUnitOfWork, AdminUser, UserRole } from '../domain/index.js';
+import type {
+  AdminUnitOfWork,
+  AdminUser,
+  AuthCacheInvalidator,
+  UserRole,
+} from '../domain/index.js';
 import {
   AdminUserNotFoundError,
   CannotChangeOwnRoleError,
@@ -7,6 +12,12 @@ import {
 
 export interface UpdateUserRoleDeps {
   unitOfWork: AdminUnitOfWork;
+  /** Required, not optional: forgetting to evict the auth guard's cached
+   * role/tokenVersion entry (#369) would silently keep a demoted user's
+   * privileges alive for the cache TTL on every deployment that omitted
+   * it — a wiring mistake that must fail at compile time, not at runtime
+   * in production. */
+  authCacheInvalidator: AuthCacheInvalidator;
 }
 
 export interface UpdateUserRoleInput {
@@ -30,7 +41,7 @@ export interface UpdateUserRoleInput {
  */
 export function createUpdateUserRoleUseCase(deps: UpdateUserRoleDeps) {
   return async function updateUserRole(input: UpdateUserRoleInput): Promise<AdminUser> {
-    return deps.unitOfWork.run(
+    const updated = await deps.unitOfWork.run(
       async ({ userRoleRepository, auditLogRepository, sessionRevoker }) => {
         const target = await userRoleRepository.findById(input.userId);
         if (!target) throw new AdminUserNotFoundError();
@@ -67,5 +78,17 @@ export function createUpdateUserRoleUseCase(deps: UpdateUserRoleDeps) {
         return { ...target, role: input.role };
       },
     );
+
+    // #369: the shared HTTP auth guard caches `{ role, tokenVersion }` per
+    // user in Redis. Evict *here* — after the unit of work commits — not
+    // inside `SessionRevoker`: a pre-commit eviction leaves a window in
+    // which a concurrent request re-populates the cache from the
+    // still-current pre-bump row, and that entry then outlives the commit
+    // for the full cache TTL. Post-commit, the next request is guaranteed
+    // to re-read the fresh row. Never throws (see `AuthCacheInvalidator`),
+    // so a failed eviction can't misreport a committed change as failed.
+    await deps.authCacheInvalidator.invalidateUser(input.userId);
+
+    return updated;
   };
 }

@@ -7,7 +7,19 @@ export { transactionResponseSchema } from '../../../shared/validation/transactio
 const chainDeliveryId = chainId.max(128, 'chainDeliveryId must be at most 128 characters');
 // Module-specific: a token amount that happens to share the digit-string
 // shape of `chainId` but is a distinct concept — kept local by design.
-const amount = z.string().regex(/^\d+$/, 'Must be a non-negative integer string');
+const amount = z
+  .string()
+  .regex(/^\d+$/, 'Must be a non-negative integer string')
+  .refine(
+    (val) => {
+      try {
+        return BigInt(val) > 0n;
+      } catch {
+        return false;
+      }
+    },
+    { message: 'amount must be greater than zero' },
+  );
 const escrowStatus = z.enum(['LOCKED', 'RELEASED', 'REFUNDED', 'PAUSED']);
 
 // Stellar StrKey ed25519 public keys are 56 characters; cap address strings

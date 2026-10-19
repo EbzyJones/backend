@@ -4,6 +4,7 @@ import type {
   AdminUser,
   AuditLogEntry,
   AuditLogRepository,
+  AuthCacheInvalidator,
   DisputeReviewItem,
   DisputeReviewReader,
   SessionRevoker,
@@ -170,6 +171,24 @@ export function createFakeSessionRevoker(): SessionRevoker & {
       if (!revokedUserIds.includes(userId)) {
         revokedUserIds.push(userId);
       }
+    },
+  };
+}
+
+export function createFakeAuthCacheInvalidator(): AuthCacheInvalidator & {
+  wasCalledFor(userId: string): boolean;
+  allInvalidated(): string[];
+} {
+  const invalidatedUserIds: string[] = [];
+  return {
+    wasCalledFor(userId) {
+      return invalidatedUserIds.includes(userId);
+    },
+    allInvalidated() {
+      return invalidatedUserIds;
+    },
+    async invalidateUser(userId) {
+      invalidatedUserIds.push(userId);
     },
   };
 }

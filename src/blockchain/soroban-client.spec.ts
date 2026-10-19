@@ -50,4 +50,48 @@ describe('SorobanClient', () => {
     await expect(client.getHealth()).rejects.toThrow('Soroban RPC call failed: getHealth');
     expect(getHealth).toHaveBeenCalledTimes(1);
   });
+
+  it('retries an RPC call that fails with plain object 429 JSON-RPC error', async () => {
+    const client = new SorobanClient('https://soroban.example.test');
+    const getHealth = vi
+      .spyOn(client.raw, 'getHealth')
+      .mockRejectedValueOnce({ code: 429, message: 'Rate limit exceeded' })
+      .mockResolvedValueOnce({
+        status: 'healthy',
+      } as Awaited<ReturnType<rpc.Server['getHealth']>>);
+
+    vi.useFakeTimers();
+    const pending = client.getHealth();
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual({ status: 'healthy' });
+    expect(getHealth).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries an RPC call that fails with plain object 5xx JSON-RPC error', async () => {
+    const client = new SorobanClient('https://soroban.example.test');
+    const getHealth = vi
+      .spyOn(client.raw, 'getHealth')
+      .mockRejectedValueOnce({ code: -32603, message: 'Server error: 503 Service Unavailable' })
+      .mockResolvedValueOnce({
+        status: 'healthy',
+      } as Awaited<ReturnType<rpc.Server['getHealth']>>);
+
+    vi.useFakeTimers();
+    const pending = client.getHealth();
+    await vi.runAllTimersAsync();
+
+    await expect(pending).resolves.toEqual({ status: 'healthy' });
+    expect(getHealth).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry client-side bad requests from plain object errors', async () => {
+    const client = new SorobanClient('https://soroban.example.test');
+    const getHealth = vi
+      .spyOn(client.raw, 'getHealth')
+      .mockRejectedValue({ code: -32600, message: 'Invalid Request' });
+
+    await expect(client.getHealth()).rejects.toThrow('Soroban RPC call failed: getHealth');
+    expect(getHealth).toHaveBeenCalledTimes(1);
+  });
 });

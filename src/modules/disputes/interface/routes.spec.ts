@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it } from 'vitest';
 import { createDisputeRoutes, type DisputeUseCases } from './routes.js';
+import { disputeIdParamsSchema } from './schemas.js';
 import { buildDispute } from '../application/__fixtures__/fakes.js';
 import type { GetDisputeResult } from '../application/index.js';
 
@@ -29,10 +30,7 @@ function buildUseCases(dispute: GetDisputeResult['dispute']): DisputeUseCases {
  * here carries a real, randomly generated address instead. */
 const RAISER = Keypair.random().publicKey();
 
-async function getDisputeResponse(
-  dispute: GetDisputeResult['dispute'],
-  expectSuccess = true,
-) {
+async function getDisputeResponse(dispute: GetDisputeResult['dispute'], expectSuccess = true) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -78,5 +76,44 @@ describe('GET /disputes/:chainDeliveryId serialization (#293)', () => {
     );
 
     expect(response.statusCode).toBe(500);
+  });
+});
+
+describe('disputeIdParamsSchema BigInt transform (#296)', () => {
+  it('converts valid integer strings to BigInt via Zod .transform()', () => {
+    const parsed = disputeIdParamsSchema.parse({ chainDeliveryId: '123456789' });
+    expect(parsed.chainDeliveryId).toBe(123456789n);
+    expect(typeof parsed.chainDeliveryId).toBe('bigint');
+  });
+
+  it('rejects non-numeric characters defensively', () => {
+    const result = disputeIdParamsSchema.safeParse({ chainDeliveryId: '123a' });
+    expect(result.success).toBe(false);
+  });
+
+  it('passes BigInt to getDispute use case from route params', async () => {
+    let capturedId: bigint | undefined;
+    const app = Fastify();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+
+    const dispute = buildDispute({ raisedBy: RAISER, chainDeliveryId: 42n });
+    const useCases = {
+      getDispute: async (input: { chainDeliveryId: bigint }): Promise<GetDisputeResult> => {
+        capturedId = input.chainDeliveryId;
+        return { dispute, evidence: [] };
+      },
+      uploadEvidence: async () => ({ evidence: {} as never }),
+      downloadEvidence: async () => ({ contentType: 'application/pdf', bytes: Buffer.from('') }),
+      buildTransactions: {} as never,
+    } as unknown as DisputeUseCases;
+
+    await app.register(createDisputeRoutes(useCases, { evidenceMaxBytes: 1024 }));
+    const response = await app.inject({ method: 'GET', url: '/disputes/42' });
+    await app.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(capturedId).toBe(42n);
+    expect(typeof capturedId).toBe('bigint');
   });
 });

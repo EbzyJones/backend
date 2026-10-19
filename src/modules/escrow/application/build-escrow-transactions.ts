@@ -1,3 +1,4 @@
+import { ValidationError } from '../../../shared/errors/index.js';
 import type {
   CreateEscrowTxInput,
   EscrowTransactionBuilder,
@@ -20,8 +21,12 @@ export interface BuildEscrowTransactionsDeps {
  */
 export function createBuildEscrowTransactionsUseCases(deps: BuildEscrowTransactionsDeps) {
   return {
-    buildCreateEscrowTransaction: (input: CreateEscrowTxInput): Promise<string> =>
-      deps.transactionBuilder.buildCreateEscrow(input),
+    buildCreateEscrowTransaction: async (input: CreateEscrowTxInput): Promise<string> => {
+      if (input.amount <= 0n) {
+        throw new ValidationError('Escrow amount must be greater than zero');
+      }
+      return deps.transactionBuilder.buildCreateEscrow(input);
+    },
 
     buildReleaseEscrowTransaction: (input: ReleaseEscrowTxInput): Promise<string> =>
       deps.transactionBuilder.buildReleaseEscrow(input),

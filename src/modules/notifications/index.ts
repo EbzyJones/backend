@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { PrismaClient } from '@prisma/client';
 import type { Worker } from 'bullmq';
 import { getConfig } from '../../shared/config/index.js';
+import { smtpSettingsFromEnv } from '../../shared/smtp/index.js';
 import {
   createDispatchNotificationsFromEventUseCase,
   createGetNotificationUseCase,
@@ -64,7 +65,11 @@ export function createNotificationsBackgroundWorker(prisma: PrismaClient): Worke
   const notificationRepository = createPrismaNotificationRepository(prisma);
   const userContactLookup = createPrismaUserContactLookup(prisma);
   const config = getConfig();
-  const sender = selectNotificationSender(config.NODE_ENV, config.NOTIFICATION_PROVIDER);
+  const sender = selectNotificationSender(
+    config.NODE_ENV,
+    config.NOTIFICATION_PROVIDER,
+    smtpSettingsFromEnv(config),
+  );
 
   const sendNotification = createSendNotificationUseCase({
     notificationRepository,

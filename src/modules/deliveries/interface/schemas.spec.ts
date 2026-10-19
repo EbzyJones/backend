@@ -1,5 +1,6 @@
+import { Keypair } from '@stellar/stellar-sdk';
 import { describe, expect, it } from 'vitest';
-import { getDeliveryResponseSchema } from './schemas.js';
+import { createDeliveryBodySchema, getDeliveryResponseSchema } from './schemas.js';
 
 function deliveryDto(destination: string) {
   return {
@@ -31,5 +32,64 @@ describe('delivery response schemas', () => {
     const result = getDeliveryResponseSchema.safeParse({ data: deliveryDto('a'.repeat(257)) });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe('createDeliveryBodySchema (issue #377)', () => {
+  const senderAddress = Keypair.random().publicKey();
+  const recipientAddress = Keypair.random().publicKey();
+
+  function validCreateBody(overrides: Record<string, unknown> = {}) {
+    return {
+      senderAddress,
+      recipientAddress,
+      origin: 'Lagos Warehouse',
+      destination: 'Abuja Depot',
+      cargoCategory: 'GENERAL',
+      weightGrams: 500,
+      fragile: false,
+      estimatedDelivery: '2026-12-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('accepts a valid payload with distinct origin/destination and parties', () => {
+    expect(createDeliveryBodySchema.safeParse(validCreateBody()).success).toBe(true);
+  });
+
+  it('rejects identical origin and destination', () => {
+    const result = createDeliveryBodySchema.safeParse(
+      validCreateBody({ origin: 'Warehouse A', destination: 'Warehouse A' }),
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success === false) {
+      expect(result.error.issues[0]).toMatchObject({
+        path: ['destination'],
+        message: 'Destination must differ from origin',
+      });
+    }
+  });
+
+  it('rejects origin/destination that differ only by case and surrounding whitespace', () => {
+    const result = createDeliveryBodySchema.safeParse(
+      validCreateBody({ origin: 'Warehouse A', destination: '  warehouse a ' }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects identical sender and recipient addresses', () => {
+    const result = createDeliveryBodySchema.safeParse(
+      validCreateBody({ recipientAddress: senderAddress }),
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success === false) {
+      expect(result.error.issues[0]).toMatchObject({
+        path: ['recipientAddress'],
+        message: 'Recipient address must differ from sender address',
+      });
+    }
   });
 });

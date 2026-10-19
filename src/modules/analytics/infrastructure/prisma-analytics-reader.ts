@@ -13,7 +13,7 @@ export function createPrismaAnalyticsReader(prisma: PrismaClient): AnalyticsRead
     async getGmvByToken() {
       const grouped = await prisma.escrow.groupBy({
         by: ['token'],
-        where: { status: 'RELEASED' },
+        where: { status: 'RELEASED', isVerified: true },
         _sum: { amount: true },
         _count: { _all: true },
       });

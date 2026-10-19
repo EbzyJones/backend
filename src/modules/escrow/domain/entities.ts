@@ -20,6 +20,7 @@ export interface Escrow {
   releasedAt: Date | null;
   refundedAt: Date | null;
   createdAtChain: Date;
+  isVerified: boolean;
 }
 
 /**
@@ -29,4 +30,10 @@ export interface Escrow {
  * only ever observable from `escrow_released`/`escrow_refunded` event
  * payloads, never from a read call (PHASE_1_DOMAIN_ANALYSIS.md §3).
  */
-export type ChainEscrowRecord = Omit<Escrow, 'id' | 'platformFee' | 'releasedAt' | 'refundedAt'>;
+export type ChainEscrowRecord = Omit<
+  Escrow,
+  'id' | 'platformFee' | 'releasedAt' | 'refundedAt' | 'isVerified'
+> & {
+  platformFee?: bigint | null;
+  isVerified?: boolean;
+};

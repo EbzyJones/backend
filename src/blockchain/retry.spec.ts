@@ -42,7 +42,6 @@ describe('withRetry', () => {
 
   it('applies jitter to exponential backoff delays for variability', async () => {
     const delays: number[] = [];
-    const originalSetTimeout = global.setTimeout;
     vi.spyOn(global, 'setTimeout').mockImplementation((cb: () => void, delay?: number) => {
       if (typeof delay === 'number') {
         delays.push(delay);
@@ -114,6 +113,37 @@ describe('withRetry', () => {
     // 100 * 2^0 = 100, 100 * 2^1 = 200, 100 * 2^2 = 400
     expect(delays).toEqual([100, 200, 400]);
   });
+
+  // Issue #344: with large maxAttempts the exponent must be capped so the
+  // backoff never overflows into NaN/Infinity — a NaN delay would make
+  // setTimeout fire immediately and turn the retry loop into a hot spin
+  // against a struggling RPC endpoint.
+  it('caps backoff safely for large attempt counts without producing NaN delays', async () => {
+    const delays: number[] = [];
+    vi.spyOn(global, 'setTimeout').mockImplementation((cb: () => void, delay?: number) => {
+      if (typeof delay === 'number') {
+        delays.push(delay);
+      }
+      cb();
+      return {} as NodeJS.Timeout;
+    });
+
+    const fn = vi.fn().mockRejectedValue(new Error('fail'));
+
+    await expect(
+      withRetry(fn, { maxAttempts: 64, baseDelayMs: 100, maxDelayMs: 8_000, jitter: false }),
+    ).rejects.toThrow('fail');
+
+    expect(fn).toHaveBeenCalledTimes(64);
+    expect(delays).toHaveLength(63);
+    for (const delay of delays) {
+      expect(Number.isFinite(delay)).toBe(true);
+      expect(delay).toBeGreaterThanOrEqual(0);
+      expect(delay).toBeLessThanOrEqual(8_000);
+    }
+
+    vi.restoreAllMocks();
+  });
 });
 
 describe('CircuitBreaker', () => {
@@ -165,6 +195,60 @@ describe('CircuitBreaker', () => {
     // With a single breaker, this fails. With scoped breakers, getLatestLedger succeeds
     // This test documents the expected behavior with scoped breakers (#24)
     await expect(breaker.execute(successfulGetLatestLedger)).rejects.toThrow(
+      'Circuit breaker open',
+    );
+  });
+
+  // Issue #345: only ONE trial request may pass through in half-open state;
+  // the rest of a concurrent burst must be rejected immediately so a
+  // struggling RPC endpoint isn't flooded while it recovers.
+  it('allows only a single trial request in half-open state under concurrency', async () => {
+    const breaker = new CircuitBreaker({ failureThreshold: 1, cooldownMs: 1 });
+
+    await expect(breaker.execute(() => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
+    expect(breaker.getState()).toBe('open');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const fn = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return 'ok';
+    });
+
+    const results = await Promise.allSettled([
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+      breaker.execute(fn),
+    ]);
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(9);
+    expect(breaker.getState()).toBe('closed');
+  });
+
+  it('re-opens after a failing half-open probe and requires a new cooldown', async () => {
+    const breaker = new CircuitBreaker({ failureThreshold: 1, cooldownMs: 1 });
+
+    await expect(breaker.execute(() => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // First probe after cooldown fails → back to open
+    await expect(breaker.execute(() => Promise.reject(new Error('still down')))).rejects.toThrow(
+      'still down',
+    );
+    expect(breaker.getState()).toBe('open');
+
+    // Immediately after, the breaker must be closed off again until the
+    // next cooldown elapses (a fresh openedAt was stamped on probe failure).
+    await expect(breaker.execute(() => Promise.resolve('should not run'))).rejects.toThrow(
       'Circuit breaker open',
     );
   });

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
   Notification,
@@ -140,7 +141,7 @@ export function buildBlockchainEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['driver_assigned'],
-    payload: ['1', 'GDRIVER'],
+    payload: ['1', testAddress('driver')],
     closedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
