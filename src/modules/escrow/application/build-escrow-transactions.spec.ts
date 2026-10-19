@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createBuildEscrowTransactionsUseCases } from './build-escrow-transactions.js';
 import { createFakeEscrowTransactionBuilder } from './__fixtures__/fakes.js';
+import { InvalidEscrowStateError } from '../domain/errors.js';
 
 describe('buildEscrowTransactions use cases', () => {
   it('delegates each build call to the transaction builder port', async () => {
@@ -73,5 +74,49 @@ describe('buildEscrowTransactions use cases', () => {
         amount: 10_000_000n,
       }),
     ).resolves.toBe('unsigned-xdr:create-escrow');
+  });
+
+  it('builds a refund transaction for a LOCKED escrow', async () => {
+    const transactionBuilder = createFakeEscrowTransactionBuilder({
+      escrowStatus: 'LOCKED',
+    });
+    const useCases = createBuildEscrowTransactionsUseCases({ transactionBuilder });
+
+    await expect(
+      useCases.buildRefundEscrowTransaction({ callerAddress: 'GA', chainDeliveryId: 1n }),
+    ).resolves.toBe('unsigned-xdr:refund-escrow');
+  });
+
+  it('builds a refund transaction for a PAUSED escrow', async () => {
+    const transactionBuilder = createFakeEscrowTransactionBuilder({
+      escrowStatus: 'PAUSED',
+    });
+    const useCases = createBuildEscrowTransactionsUseCases({ transactionBuilder });
+
+    await expect(
+      useCases.buildRefundEscrowTransaction({ callerAddress: 'GA', chainDeliveryId: 1n }),
+    ).resolves.toBe('unsigned-xdr:refund-escrow');
+  });
+
+  it('rejects refund transaction build for a RELEASED escrow', async () => {
+    const transactionBuilder = createFakeEscrowTransactionBuilder({
+      escrowStatus: 'RELEASED',
+    });
+    const useCases = createBuildEscrowTransactionsUseCases({ transactionBuilder });
+
+    await expect(
+      useCases.buildRefundEscrowTransaction({ callerAddress: 'GA', chainDeliveryId: 1n }),
+    ).rejects.toBeInstanceOf(InvalidEscrowStateError);
+  });
+
+  it('rejects refund transaction build for a REFUNDED escrow', async () => {
+    const transactionBuilder = createFakeEscrowTransactionBuilder({
+      escrowStatus: 'REFUNDED',
+    });
+    const useCases = createBuildEscrowTransactionsUseCases({ transactionBuilder });
+
+    await expect(
+      useCases.buildRefundEscrowTransaction({ callerAddress: 'GA', chainDeliveryId: 1n }),
+    ).rejects.toThrow('Escrow cannot be refunded in current status');
   });
 });
