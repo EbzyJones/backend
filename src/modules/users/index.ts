@@ -5,6 +5,7 @@ import {
   createGetMyProfileUseCase,
   createListWalletsUseCase,
   createRequestWalletLinkChallengeUseCase,
+  createSetPrimaryWalletUseCase,
   createUnlinkWalletUseCase,
 } from './application/index.js';
 import {
@@ -34,6 +35,7 @@ export function createUsersModule(prisma: PrismaClient): FastifyPluginAsyncZod {
     }),
     listWallets: createListWalletsUseCase({ walletAddressRepository }),
     unlinkWallet: createUnlinkWalletUseCase({ walletAddressRepository }),
+    setPrimaryWallet: createSetPrimaryWalletUseCase({ walletAddressRepository }),
   };
 
   return createUsersRoutes(useCases);

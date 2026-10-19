@@ -47,20 +47,21 @@ declare module 'fastify' {
  * throughout the codebase, so changing its signature would mean touching
  * every route file and module composition root for a single security check.
  */
-export async function authenticate(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
-  const header = request.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    throw new UnauthorizedError('Missing or malformed Authorization header');
-  }
+export const authGuard = {
+  async authenticate(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+    const header = request.headers.authorization;
+    if (!header?.startsWith('Bearer ')) {
+      throw new UnauthorizedError('Missing or malformed Authorization header');
+    }
 
-  const token = header.slice('Bearer '.length);
+    const token = header.slice('Bearer '.length);
 
-  let claims;
-  try {
-    claims = verifyAccessToken(token);
-  } catch {
-    throw new UnauthorizedError('Invalid or expired access token');
-  }
+    let claims;
+    try {
+      claims = verifyAccessToken(token);
+    } catch {
+      throw new UnauthorizedError('Invalid or expired access token');
+    }
 
   let currentUser = await readAuthContext(claims.sub);
   if (!currentUser) {
@@ -74,14 +75,19 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
     }
   }
 
-  // Tokens issued before `tokenVersion` existed carry no such claim —
-  // treated as version 0 (the column's default) so they keep working
-  // rather than being force-invalidated by this change's own deploy.
-  if (!currentUser || currentUser.tokenVersion !== (claims.tokenVersion ?? 0)) {
-    throw new UnauthorizedError('Invalid or expired access token');
-  }
+    // Tokens issued before `tokenVersion` existed carry no such claim —
+    // treated as version 0 (the column's default) so they keep working
+    // rather than being force-invalidated by this change's own deploy.
+    if (!currentUser || currentUser.tokenVersion !== (claims.tokenVersion ?? 0)) {
+      throw new UnauthorizedError('Invalid or expired access token');
+    }
 
-  request.user = { id: claims.sub, role: currentUser.role };
+    request.user = { id: claims.sub, role: currentUser.role };
+  },
+};
+
+export async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  return authGuard.authenticate(request, reply);
 }
 
 /**

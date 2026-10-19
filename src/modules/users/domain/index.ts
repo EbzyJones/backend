@@ -13,4 +13,5 @@ export {
   ForbiddenWalletAccessError,
   InvalidWalletChallengeError,
   InvalidWalletSignatureError,
+  ChallengeExpiredError,
 } from './errors.js';

@@ -5,6 +5,7 @@ import type {
   WalletAddressRepository,
 } from '../domain/index.js';
 import {
+  ChallengeExpiredError,
   InvalidWalletChallengeError,
   InvalidWalletSignatureError,
   WalletAlreadyLinkedError,
@@ -51,6 +52,11 @@ export function createConfirmWalletLinkUseCase(deps: ConfirmWalletLinkDeps) {
     );
     if (!signatureValid) {
       throw new InvalidWalletSignatureError();
+    }
+
+    const consumed = await deps.challengeService.consumeChallenge(verifiedChallenge.jti);
+    if (!consumed) {
+      throw new ChallengeExpiredError();
     }
 
     const existing = await deps.walletAddressRepository.findByAddress(input.address);

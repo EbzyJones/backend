@@ -44,4 +44,29 @@ describe('unlinkWallet', () => {
       ForbiddenWalletAccessError,
     );
   });
+
+  it('unlinks a primary wallet gracefully when multiple wallets exist', async () => {
+    const walletAddressRepository = createInMemoryWalletAddressRepository();
+    const userId = randomUUID();
+    const primaryWallet = await walletAddressRepository.create({
+      userId,
+      address: 'G_PRIMARY...',
+      isPrimary: true,
+      verifiedAt: new Date(),
+    });
+    const secondaryWallet = await walletAddressRepository.create({
+      userId,
+      address: 'G_SECONDARY...',
+      isPrimary: false,
+      verifiedAt: new Date(),
+    });
+
+    const unlinkWallet = createUnlinkWalletUseCase({ walletAddressRepository });
+    await unlinkWallet({ userId, walletId: primaryWallet.id });
+
+    expect(await walletAddressRepository.findById(primaryWallet.id)).toBeNull();
+    const remaining = await walletAddressRepository.findByUserId(userId);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(secondaryWallet.id);
+  });
 });

@@ -51,6 +51,23 @@ export function createInMemoryWalletAddressRepository(): WalletAddressRepository
     async remove(id) {
       records.delete(id);
     },
+    async setPrimary(userId, walletId) {
+      let target: WalletAddressRecord | null = null;
+      for (const record of records.values()) {
+        if (record.userId === userId) {
+          if (record.id === walletId) {
+            record.isPrimary = true;
+            target = record;
+          } else {
+            record.isPrimary = false;
+          }
+        }
+      }
+      if (!target) {
+        throw new Error('Wallet not found');
+      }
+      return target;
+    },
   };
 }
 
@@ -59,10 +76,12 @@ export function createInMemoryWalletAddressRepository(): WalletAddressRepository
  * cryptographic signing involved, since that's exercised separately by
  * StellarSignatureVerifier's own real unit tests. */
 export function createFakeChallengeService(): ChallengeService & {
-  issuedFor(userId: string, address: string, expiresAt: number): string;
+  issuedFor(userId: string, address: string, expiresAt: number, jti?: string): string;
 } {
-  function encode(userId: string, address: string, expiresAt: number): string {
-    return Buffer.from(JSON.stringify({ userId, address, expiresAt }), 'utf8').toString(
+  const consumedJtis = new Set<string>();
+
+  function encode(userId: string, address: string, expiresAt: number, jti = randomUUID()): string {
+    return Buffer.from(JSON.stringify({ userId, address, expiresAt, jti }), 'utf8').toString(
       'base64url',
     );
   }
@@ -70,10 +89,10 @@ export function createFakeChallengeService(): ChallengeService & {
   return {
     issuedFor: encode,
     issueWalletLinkChallenge(userId, address) {
-      return encode(userId, address, Date.now() + 5 * 60 * 1000);
+      return encode(userId, address, Date.now() + 5 * 60 * 1000, randomUUID());
     },
     verifyWalletLinkChallenge(challenge): VerifiedChallenge {
-      let decoded: { userId?: string; address?: string; expiresAt?: number };
+      let decoded: { userId?: string; address?: string; expiresAt?: number; jti?: string };
       try {
         decoded = JSON.parse(Buffer.from(challenge, 'base64url').toString('utf8'));
       } catch {
@@ -85,7 +104,18 @@ export function createFakeChallengeService(): ChallengeService & {
       if (decoded.expiresAt < Date.now()) {
         throw new Error('expired challenge');
       }
-      return { userId: decoded.userId, address: decoded.address };
+      return {
+        userId: decoded.userId,
+        address: decoded.address,
+        jti: decoded.jti ?? randomUUID(),
+      };
+    },
+    async consumeChallenge(jti: string): Promise<boolean> {
+      if (consumedJtis.has(jti)) {
+        return false;
+      }
+      consumedJtis.add(jti);
+      return true;
     },
   };
 }

@@ -43,5 +43,18 @@ export function createPrismaWalletAddressRepository(prisma: PrismaClient): Walle
     async remove(id) {
       await prisma.walletAddress.delete({ where: { id } });
     },
+    async setPrimary(userId, walletId) {
+      const [, updated] = await prisma.$transaction([
+        prisma.walletAddress.updateMany({
+          where: { userId, isPrimary: true },
+          data: { isPrimary: false },
+        }),
+        prisma.walletAddress.update({
+          where: { id: walletId },
+          data: { isPrimary: true },
+        }),
+      ]);
+      return toDomain(updated);
+    },
   };
 }

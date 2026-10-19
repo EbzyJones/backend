@@ -15,11 +15,13 @@ export interface WalletAddressRepository {
     verifiedAt: Date;
   }): Promise<WalletAddressRecord>;
   remove(id: string): Promise<void>;
+  setPrimary(userId: string, walletId: string): Promise<WalletAddressRecord>;
 }
 
 export interface VerifiedChallenge {
   userId: string;
   address: string;
+  jti: string;
 }
 
 /**
@@ -31,6 +33,7 @@ export interface VerifiedChallenge {
 export interface ChallengeService {
   issueWalletLinkChallenge(userId: string, address: string): string;
   verifyWalletLinkChallenge(challenge: string): VerifiedChallenge;
+  consumeChallenge(jti: string): Promise<boolean>;
 }
 
 /**

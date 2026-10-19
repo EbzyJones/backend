@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Keypair } from '@stellar/stellar-sdk';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import * as authGuard from '../../../shared/http/plugins/auth-guard.js';
+
+vi.mock('../../../shared/events/contract-names.js', () => ({
+  ContractName: { Delivery: 'delivery', Escrow: 'escrow' },
+}));
+
 import { buildApp } from '../../../app.js';
 import { getPrismaClient, disconnectPrisma } from '../../../shared/database/index.js';
 import { isDatabaseAvailable } from '../../../shared/testing/database.js';
