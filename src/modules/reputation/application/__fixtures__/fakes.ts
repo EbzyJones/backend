@@ -27,6 +27,7 @@ export function createInMemoryDriverProfileRepository(): DriverProfileRepository
         id: existing?.id ?? randomUUID(),
         address,
         legacyDeliveriesCompleted: existing?.legacyDeliveriesCompleted ?? 0,
+        createdAt: existing?.createdAt ?? new Date(),
         ...fields,
       });
     },
@@ -90,6 +91,7 @@ export function buildDriverProfile(overrides: Partial<DriverProfile> = {}): Driv
     deliveriesCompleted: 0,
     legacyDeliveriesCompleted: 0,
     registeredAt: new Date('2026-01-01T00:00:00Z'),
+    createdAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
 }
