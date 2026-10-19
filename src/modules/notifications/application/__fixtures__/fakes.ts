@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
+  DeliveryParties,
+  DeliveryPartyLookup,
   Notification,
   NotificationJobScheduler,
   NotificationRepository,
@@ -112,6 +114,21 @@ export function createFakeNotificationJobScheduler(): NotificationJobScheduler &
     enqueued,
     async enqueueDelivery(notificationId) {
       enqueued.push(notificationId);
+    },
+  };
+}
+
+export function createFakeDeliveryPartyLookup(): DeliveryPartyLookup & {
+  seedParties(chainDeliveryId: string, parties: DeliveryParties): void;
+} {
+  const byDeliveryId = new Map<string, DeliveryParties>();
+
+  return {
+    seedParties(chainDeliveryId, parties) {
+      byDeliveryId.set(chainDeliveryId, parties);
+    },
+    async findParties(chainDeliveryId) {
+      return byDeliveryId.get(chainDeliveryId) ?? null;
     },
   };
 }

@@ -31,7 +31,8 @@ export function createInMemoryActorActivityRepository(): ActorActivityRepository
     async deleteOlderThan(olderThan) {
       let removed = 0;
       for (let i = rows.length - 1; i >= 0; i -= 1) {
-        if (rows[i].occurredAt < olderThan) {
+        const row = rows[i];
+        if (row !== undefined && row.occurredAt < olderThan) {
           rows.splice(i, 1);
           removed += 1;
         }

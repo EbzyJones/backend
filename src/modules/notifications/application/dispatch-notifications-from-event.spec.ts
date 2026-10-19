@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDispatchNotificationsFromEventUseCase } from './dispatch-notifications-from-event.js';
 import {
   buildBlockchainEvent,
+  createFakeDeliveryPartyLookup,
   createFakeNotificationJobScheduler,
   createFakeUserContactLookup,
   createInMemoryNotificationRepository,
@@ -10,15 +11,18 @@ import {
 function setup() {
   const notificationRepository = createInMemoryNotificationRepository();
   const userContactLookup = createFakeUserContactLookup();
+  const deliveryPartyLookup = createFakeDeliveryPartyLookup();
   const jobScheduler = createFakeNotificationJobScheduler();
   const dispatchNotificationsFromEvent = createDispatchNotificationsFromEventUseCase({
     notificationRepository,
     userContactLookup,
+    deliveryPartyLookup,
     jobScheduler,
   });
   return {
     notificationRepository,
     userContactLookup,
+    deliveryPartyLookup,
     jobScheduler,
     dispatchNotificationsFromEvent,
   };
@@ -51,6 +55,38 @@ describe('dispatchNotificationsFromEvent', () => {
       payload: { chainDeliveryId: '1' },
     });
     expect(jobScheduler.enqueued).toEqual([notification?.id]);
+  });
+
+  it('delivery.delivery_confirmed: notifies sender and driver resolved via deliveryPartyLookup', async () => {
+    const {
+      notificationRepository,
+      userContactLookup,
+      deliveryPartyLookup,
+      jobScheduler,
+      dispatchNotificationsFromEvent,
+    } = setup();
+    deliveryPartyLookup.seedParties('1', {
+      sender: 'GSENDER',
+      recipient: 'GRECIPIENT',
+      driver: 'GDRIVER',
+    });
+    userContactLookup.seedAddress('GSENDER', { userId: 'user-1', email: 'sender@example.com' });
+    userContactLookup.seedAddress('GDRIVER', { userId: 'user-driver', email: 'driver@example.com' });
+
+    await dispatchNotificationsFromEvent(
+      buildBlockchainEvent({
+        contractName: 'delivery',
+        topic: ['delivery_confirmed'],
+        payload: ['1'],
+      }),
+    );
+
+    const notifications = notificationRepository.all();
+    expect(notifications).toHaveLength(2);
+    expect(notifications.map((n) => n.userId).sort()).toEqual(['user-1', 'user-driver']);
+    expect(notifications.every((n) => n.type === 'delivery.delivery_confirmed')).toBe(true);
+    expect(notifications.every((n) => n.payload.chainDeliveryId === '1')).toBe(true);
+    expect(jobScheduler.enqueued).toHaveLength(2);
   });
 
   it('escrow.delivery_disputed: notifies the disputing party, reading the id from the topic', async () => {
