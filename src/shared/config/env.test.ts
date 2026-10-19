@@ -16,8 +16,8 @@ function readEnvExampleKeys(): string[] {
   return contents
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith('#'))
-    .map((line) => line.split('=')[0]);
+    .filter((line): line is string => Boolean(line) && !line.startsWith('#'))
+    .map((line) => line.split('=')[0] ?? '');
 }
 
 const required = {
