@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
   ChainEscrowRecord,
@@ -75,9 +76,9 @@ export function buildChainEscrowRecord(
 ): ChainEscrowRecord {
   return {
     chainDeliveryId: 1n,
-    senderAddress: 'GSENDER',
-    recipientAddress: 'GRECIPIENT',
-    driverAddress: 'GDRIVER',
+    senderAddress: testAddress('sender'),
+    recipientAddress: testAddress('recipient'),
+    driverAddress: testAddress('driver'),
     token: 'GTOKEN',
     amount: 1_000_000n,
     status: 'LOCKED',
@@ -109,7 +110,7 @@ export function buildEscrowEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['escrow_funded', '1'],
-    payload: ['GSENDER', 'GRECIPIENT', '1000000'],
+    payload: [testAddress('sender'), testAddress('recipient'), '1000000'],
     closedAt: new Date(),
     ...overrides,
   };

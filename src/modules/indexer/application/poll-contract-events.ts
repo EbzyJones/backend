@@ -40,10 +40,13 @@ export interface PollContractEventsResult {
  * One poll cycle for one contract: resume from the persisted checkpoint (or
  * start from the current chain tip on first run — no historical backfill,
  * see docs/EVENT_INDEXER.md), fetch new events, durably and idempotently
- * store each one, publish only the ones that were actually new, then
- * advance the checkpoint. The checkpoint only ever moves forward after
- * every event in the batch is safely persisted, so a crash mid-batch can't
- * skip anything on the next run.
+ * store each one, publish only the ones that were actually new and **await
+ * every subscriber** for them, then advance the checkpoint. The checkpoint
+ * only ever moves forward after every event in the batch is safely
+ * persisted *and* fully handled, so a crash mid-batch can't skip anything on
+ * the next run — and because the whole cycle (including subscriber
+ * completion) is awaited by the queue worker, batch N+1 is never ingested
+ * while batch N's handlers are still running (backpressure, issue #349).
  */
 export function createPollContractEventsUseCase(deps: PollContractEventsDeps) {
   const retentionWindowLedgers = deps.retentionWindowLedgers ?? DEFAULT_RETENTION_WINDOW_LEDGERS;
@@ -88,7 +91,13 @@ export function createPollContractEventsUseCase(deps: PollContractEventsDeps) {
       const inserted = await deps.eventStore.tryInsert(stored);
       if (inserted) {
         eventsInserted += 1;
-        deps.eventPublisher.publish(stored);
+        // Await every subscriber for this event (the in-process bus bounds
+        // their concurrency) before the next event is published, before the
+        // checkpoint below advances, and therefore before the next poll
+        // cycle starts — fire-and-forget publishing here is what let
+        // catch-up batches pile up unbounded parallel database writes
+        // (issue #349).
+        await deps.eventPublisher.publish(stored);
       }
     }
 

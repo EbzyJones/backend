@@ -4,7 +4,9 @@ import type { EventPublisher } from '../domain/index.js';
 export function createInProcessEventBus(): EventPublisher {
   return {
     publish(event) {
-      publishBlockchainEvent(event);
+      // The bus resolves once every subscriber has completed (bounded
+      // concurrency) — the poll loop awaits this before checkpointing.
+      return publishBlockchainEvent(event);
     },
   };
 }

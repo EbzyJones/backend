@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { testAddress } from '../../../shared/testing/addresses.js';
 import { createSyncDeliveryFromEventUseCase } from './sync-delivery-from-event.js';
 import {
   buildChainDeliveryRecord,
@@ -32,7 +33,7 @@ describe('syncDeliveryFromEvent', () => {
     contractReader.seed(7n, buildChainDeliveryRecord({ chainDeliveryId: 7n, origin: 'Nairobi' }));
 
     await syncDeliveryFromEvent(
-      buildDeliveryEvent({ topic: ['delivery_created'], payload: ['7', 'GSENDER'] }),
+      buildDeliveryEvent({ topic: ['delivery_created'], payload: ['7', testAddress('sender')] }),
     );
 
     const stored = await deliveryRepository.findByChainId(7n);
@@ -45,12 +46,12 @@ describe('syncDeliveryFromEvent', () => {
     deliveryRepository.seed(buildDelivery({ chainDeliveryId: 1n, status: 'PENDING' }));
 
     await syncDeliveryFromEvent(
-      buildDeliveryEvent({ topic: ['driver_assigned'], payload: ['1', 'GDRIVER'] }),
+      buildDeliveryEvent({ topic: ['driver_assigned'], payload: ['1', testAddress('driver')] }),
     );
 
     const stored = await deliveryRepository.findByChainId(1n);
     expect(stored?.status).toBe('ACTIVE');
-    expect(stored?.driverAddress).toBe('GDRIVER');
+    expect(stored?.driverAddress).toBe(testAddress('driver'));
   });
 
   it('DeliveryInTransit: sets status IN_TRANSIT and transitStartedAt from the ledger close time', async () => {
@@ -61,7 +62,7 @@ describe('syncDeliveryFromEvent', () => {
     await syncDeliveryFromEvent(
       buildDeliveryEvent({
         topic: ['DeliveryInTransit'],
-        payload: ['1', 'GDRIVER', '1700000000'],
+        payload: ['1', testAddress('driver'), '1700000000'],
         closedAt,
       }),
     );
@@ -77,7 +78,11 @@ describe('syncDeliveryFromEvent', () => {
     const closedAt = new Date('2026-01-02T00:00:00Z');
 
     await syncDeliveryFromEvent(
-      buildDeliveryEvent({ topic: ['delivery_confirmed'], payload: ['1', 'GRECIPIENT'], closedAt }),
+      buildDeliveryEvent({
+        topic: ['delivery_confirmed'],
+        payload: ['1', testAddress('recipient')],
+        closedAt,
+      }),
     );
 
     const stored = await deliveryRepository.findByChainId(1n);
@@ -90,7 +95,7 @@ describe('syncDeliveryFromEvent', () => {
     deliveryRepository.seed(buildDelivery({ chainDeliveryId: 1n, status: 'PENDING' }));
 
     await syncDeliveryFromEvent(
-      buildDeliveryEvent({ topic: ['delivery_cancelled'], payload: ['1', 'GSENDER'] }),
+      buildDeliveryEvent({ topic: ['delivery_cancelled'], payload: ['1', testAddress('sender')] }),
     );
 
     expect((await deliveryRepository.findByChainId(1n))?.status).toBe('CANCELLED');
@@ -101,7 +106,10 @@ describe('syncDeliveryFromEvent', () => {
     deliveryRepository.seed(buildDelivery({ chainDeliveryId: 1n, status: 'ACTIVE' }));
 
     await syncDeliveryFromEvent(
-      buildDeliveryEvent({ topic: ['delivery_disputed'], payload: ['1', 'GSENDER', '1700000000'] }),
+      buildDeliveryEvent({
+        topic: ['delivery_disputed'],
+        payload: ['1', testAddress('sender'), '1700000000'],
+      }),
     );
 
     expect((await deliveryRepository.findByChainId(1n))?.status).toBe('DISPUTED');

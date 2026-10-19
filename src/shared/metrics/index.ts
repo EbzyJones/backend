@@ -1,5 +1,6 @@
 export {
   registry,
+  eventSubscriberErrorsTotal,
   httpRequestDuration,
   httpRequestsTotal,
   indexerLagLedgers,

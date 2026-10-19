@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPollContractEventsUseCase } from './poll-contract-events.js';
+import type { EventPublisher } from '../domain/index.js';
 import {
   buildRawEvent,
   createFakeEventPublisher,
@@ -170,6 +171,54 @@ describe('pollContractEvents', () => {
 
     expect(await checkpointRepository.get('escrow', 'testnet')).toMatchObject({
       lastLedgerSeq: 2050n,
+    });
+  });
+
+  it('awaits every subscriber for the batch before advancing the checkpoint (backpressure)', async () => {
+    const checkpointRepository = createInMemoryCheckpointRepository();
+    const eventStore = createInMemoryEventStore();
+    const eventSource = createFakeEventSource();
+
+    // A publisher whose subscribers are still running when publish() is
+    // first called — modelling the in-process bus awaiting its handlers.
+    let releasePublish!: () => void;
+    let publishCalled = false;
+    const eventPublisher: EventPublisher = {
+      publish() {
+        publishCalled = true;
+        return new Promise<void>((resolve) => {
+          releasePublish = resolve;
+        });
+      },
+    };
+    const advanceSpy = vi.spyOn(checkpointRepository, 'advance');
+    const pollContractEvents = createPollContractEventsUseCase({
+      checkpointRepository,
+      eventStore,
+      eventSource,
+      eventPublisher,
+    });
+    eventSource.queueResponse({
+      events: [buildRawEvent({ rpcEventId: 'evt-await-1' })],
+      latestLedgerSeen: 1002,
+    });
+
+    const poll = pollContractEvents({
+      contractName: 'escrow',
+      contractId: 'C_ESCROW',
+      network: 'testnet',
+    });
+
+    await vi.waitFor(() => expect(publishCalled).toBe(true));
+    // Subscribers have not finished — the checkpoint must not have moved.
+    expect(advanceSpy).not.toHaveBeenCalled();
+
+    releasePublish();
+    await poll;
+
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(await checkpointRepository.get('escrow', 'testnet')).toMatchObject({
+      lastLedgerSeq: 1002n,
     });
   });
 });

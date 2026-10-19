@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
   ChainDisputeCase,
@@ -196,7 +197,7 @@ export function buildDispute(overrides: Partial<Dispute> = {}): Dispute {
     id: randomUUID(),
     chainDeliveryId: 1n,
     status: 'OPEN',
-    raisedBy: 'GSENDER',
+    raisedBy: testAddress('sender'),
     raisedAt: new Date('2026-01-01T00:00:00Z'),
     raisedByUserId: null,
     resolvedBy: null,
@@ -210,7 +211,7 @@ export function buildChainDisputeCase(overrides: Partial<ChainDisputeCase> = {})
   return {
     chainDeliveryId: 1n,
     status: 'OPEN',
-    raisedBy: 'GSENDER',
+    raisedBy: testAddress('sender'),
     raisedAt: new Date('2026-01-01T00:00:00Z'),
     evidenceHashes: [],
     ...overrides,
@@ -230,7 +231,7 @@ export function buildEvidence(overrides: Partial<Evidence> = {}): Evidence {
     hash: 'a'.repeat(64),
     storageUrl: 'fake://storage/1',
     contentType: 'image/png',
-    uploadedBy: 'GSENDER',
+    uploadedBy: testAddress('sender'),
     uploadedByUserId: null,
     createdAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
@@ -252,7 +253,7 @@ export function buildDisputeResolutionEvent(
     // this arrives as '["1"]', not a native array — unlike escrow_contract's
     // bare u64 topic segment ('1').
     topic: ['dispute_raised', '["1"]'],
-    payload: ['GSENDER', ['1']],
+    payload: [testAddress('sender'), ['1']],
     closedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
@@ -268,7 +269,7 @@ export function buildEscrowDisputeEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['delivery_disputed', '1'],
-    payload: ['GDISPUTER', '1700000000'],
+    payload: [testAddress('disputer'), '1700000000'],
     closedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };
