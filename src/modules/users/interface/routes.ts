@@ -86,6 +86,23 @@ export function createUsersRoutes(useCases: UsersUseCases): FastifyPluginAsyncZo
       '/users/me/wallets/challenge',
       {
         preHandler: authenticate,
+        // Dedicated limit for challenge issuance (issue #375): every request
+        // signs a short-TTL JWT, so an authenticated client could otherwise
+        // burn CPU on unthrottled 5/minute-signed tokens while still sitting
+        // comfortably under the ambient 100/min global limit. Budgeted per
+        // *user*, not per IP — `hook: 'preHandler'` makes @fastify/rate-limit
+        // append its check after `authenticate` in this route's preHandler
+        // array (hooks run in order), so the key generator can read
+        // request.user. 6th request within a minute → 429.
+        config: {
+          rateLimit: {
+            max: 5,
+            timeWindow: 60_000,
+            hook: 'preHandler',
+            keyGenerator: (request) =>
+              request.user ? `user:${request.user.id}` : `ip:${request.ip}`,
+          },
+        },
         schema: {
           body: requestChallengeBodySchema,
           response: { 200: requestChallengeResponseSchema },

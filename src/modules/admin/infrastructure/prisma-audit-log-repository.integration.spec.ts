@@ -126,4 +126,28 @@ describe.skipIf(!dbAvailable)('Prisma audit log repository (integration)', () =>
       expect(createdAts[i]).toBeLessThanOrEqual(createdAts[i - 1]!);
     }
   });
+
+  // GDPR / account-deletion compliance (#361): the `AuditLog.actor`
+  // relation is `onDelete: SetNull`, so purging a user preserves their
+  // audit trail while nulling the reference instead of raising P2003.
+  it('nulls AuditLog.actorId (keeping the log row) when the actor user is deleted', async () => {
+    const actorId = await seedActor();
+
+    await auditLogRepository.record({
+      actorId,
+      actorLabel: 'admin@example.com',
+      action: 'user.role_updated',
+      entityType: 'User',
+      entityId: 'some-user-id',
+      metadata: { previousRole: 'CUSTOMER', newRole: 'ADMIN' },
+    });
+
+    await prisma.user.delete({ where: { id: actorId } });
+    createdUserIds.splice(createdUserIds.indexOf(actorId), 1);
+
+    const orphaned = await prisma.auditLog.findMany({ where: { action: 'user.role_updated' } });
+    const entry = orphaned.find((e) => e.actorLabel === 'admin@example.com');
+    expect(entry).toBeDefined();
+    expect(entry?.actorId).toBeNull();
+  });
 });

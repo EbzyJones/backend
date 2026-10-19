@@ -43,6 +43,11 @@ export class ConflictError extends AppError {
   readonly code = 'CONFLICT';
 }
 
+export class InsufficientFundsError extends AppError {
+  readonly statusCode = 400;
+  readonly code = 'INSUFFICIENT_FUNDS';
+}
+
 /**
  * Raised when a Soroban RPC call or contract invocation fails. Deliberately
  * distinct from ValidationError etc. — a 502-class failure reflects the

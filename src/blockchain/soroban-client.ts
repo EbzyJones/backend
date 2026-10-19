@@ -117,10 +117,18 @@ function rpcErrorMessage(error: unknown): string {
  * Without it, one rate-limited call fails the whole operation outright.
  */
 function isRetryableRpcError(error: unknown): boolean {
-  if (error instanceof Error) {
-    return /timeout|ECONNRESET|ECONNREFUSED|network|fetch failed|429|502|503|504/i.test(
-      error.message,
-    );
+  const message = rpcErrorMessage(error).toLowerCase();
+  if (/timeout|econnreset|econnrefused|network|fetch failed|429|502|503|504/i.test(message)) {
+    return true;
+  }
+
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code: unknown }).code;
+    if (typeof code === 'number') {
+      if (code === 429) return true;
+      if (code >= 500 && code < 600) return true;
+      if (code >= -32099 && code <= -32000) return true;
+    }
   }
   return false;
 }

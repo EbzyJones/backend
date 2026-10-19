@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { testAddress } from '../../../shared/testing/addresses.js';
 import { createSyncReputationFromEventUseCase } from './sync-reputation-from-event.js';
 import {
   buildChainDriverProfile,
@@ -27,44 +28,59 @@ describe('syncReputationFromEvent', () => {
 
     await syncReputationFromEvent(buildReputationEvent({ contractName: 'delivery' }));
 
-    expect(await driverProfileRepository.findByAddress('GDRIVER')).toBeNull();
+    expect(await driverProfileRepository.findByAddress(testAddress('driver'))).toBeNull();
   });
 
   it('driver_registered: hydrates the full profile via get_driver_profile, tier derived from score 50 -> SILVER', async () => {
     const { driverProfileRepository, contractReader, syncReputationFromEvent } = setup();
     contractReader.seed(
-      'GDRIVER',
-      buildChainDriverProfile({ address: 'GDRIVER', reputationScore: 50 }),
+      testAddress('driver'),
+      buildChainDriverProfile({ address: testAddress('driver'), reputationScore: 50 }),
     );
 
     await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['driver_registered'], payload: ['GDRIVER'] }),
+      buildReputationEvent({ topic: ['driver_registered'], payload: [testAddress('driver')] }),
     );
 
-    const stored = await driverProfileRepository.findByAddress('GDRIVER');
+    const stored = await driverProfileRepository.findByAddress(testAddress('driver'));
     expect(stored).toMatchObject({ reputationScore: 50, tier: 'SILVER', deliveriesCompleted: 0 });
   });
 
   it('tier bands: <50 BRONZE, 50-74 SILVER, >=75 GOLD', async () => {
     const { driverProfileRepository, contractReader, syncReputationFromEvent } = setup();
 
-    contractReader.seed('G1', buildChainDriverProfile({ address: 'G1', reputationScore: 49 }));
-    await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['driver_registered'], payload: ['G1'] }),
+    contractReader.seed(
+      testAddress('driver-1'),
+      buildChainDriverProfile({ address: testAddress('driver-1'), reputationScore: 49 }),
     );
-    expect((await driverProfileRepository.findByAddress('G1'))?.tier).toBe('BRONZE');
+    await syncReputationFromEvent(
+      buildReputationEvent({ topic: ['driver_registered'], payload: [testAddress('driver-1')] }),
+    );
+    expect((await driverProfileRepository.findByAddress(testAddress('driver-1')))?.tier).toBe(
+      'BRONZE',
+    );
 
-    contractReader.seed('G2', buildChainDriverProfile({ address: 'G2', reputationScore: 74 }));
-    await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['driver_registered'], payload: ['G2'] }),
+    contractReader.seed(
+      testAddress('driver-2'),
+      buildChainDriverProfile({ address: testAddress('driver-2'), reputationScore: 74 }),
     );
-    expect((await driverProfileRepository.findByAddress('G2'))?.tier).toBe('SILVER');
+    await syncReputationFromEvent(
+      buildReputationEvent({ topic: ['driver_registered'], payload: [testAddress('driver-2')] }),
+    );
+    expect((await driverProfileRepository.findByAddress(testAddress('driver-2')))?.tier).toBe(
+      'SILVER',
+    );
 
-    contractReader.seed('G3', buildChainDriverProfile({ address: 'G3', reputationScore: 75 }));
-    await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['driver_registered'], payload: ['G3'] }),
+    contractReader.seed(
+      testAddress('driver-3'),
+      buildChainDriverProfile({ address: testAddress('driver-3'), reputationScore: 75 }),
     );
-    expect((await driverProfileRepository.findByAddress('G3'))?.tier).toBe('GOLD');
+    await syncReputationFromEvent(
+      buildReputationEvent({ topic: ['driver_registered'], payload: [testAddress('driver-3')] }),
+    );
+    expect((await driverProfileRepository.findByAddress(testAddress('driver-3')))?.tier).toBe(
+      'GOLD',
+    );
   });
 
   it.each([
@@ -78,7 +94,7 @@ describe('syncReputationFromEvent', () => {
     'tier boundary: score %i derives tier %s (mirrors identity_reputation_contract.get_driver_tier)',
     async (score, expectedTier) => {
       const { driverProfileRepository, contractReader, syncReputationFromEvent } = setup();
-      const address = `GBOUNDARY${score}`;
+      const address = testAddress(`boundary-${score}`);
       contractReader.seed(address, buildChainDriverProfile({ address, reputationScore: score }));
 
       await syncReputationFromEvent(
@@ -92,61 +108,79 @@ describe('syncReputationFromEvent', () => {
   it('reputation_increased: refreshes from get_driver_profile rather than reimplementing the +points formula', async () => {
     const { driverProfileRepository, contractReader, syncReputationFromEvent } = setup();
     contractReader.seed(
-      'GDRIVER',
-      buildChainDriverProfile({ address: 'GDRIVER', reputationScore: 58, deliveriesCompleted: 3 }),
+      testAddress('driver'),
+      buildChainDriverProfile({
+        address: testAddress('driver'),
+        reputationScore: 58,
+        deliveriesCompleted: 3,
+      }),
     );
 
     await syncReputationFromEvent(
       buildReputationEvent({
         topic: ['reputation_increased'],
-        payload: ['GDRIVER', '10', 8],
+        payload: [testAddress('driver'), '10', 8],
       }),
     );
 
-    const stored = await driverProfileRepository.findByAddress('GDRIVER');
+    const stored = await driverProfileRepository.findByAddress(testAddress('driver'));
     expect(stored).toMatchObject({ reputationScore: 58, deliveriesCompleted: 3, tier: 'SILVER' });
   });
 
   it('reputation_decreased: refreshes from get_driver_profile', async () => {
     const { driverProfileRepository, contractReader, syncReputationFromEvent } = setup();
     contractReader.seed(
-      'GDRIVER',
-      buildChainDriverProfile({ address: 'GDRIVER', reputationScore: 40 }),
+      testAddress('driver'),
+      buildChainDriverProfile({ address: testAddress('driver'), reputationScore: 40 }),
     );
 
     await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['reputation_decreased'], payload: ['GDRIVER', 10] }),
+      buildReputationEvent({
+        topic: ['reputation_decreased'],
+        payload: [testAddress('driver'), 10],
+      }),
     );
 
-    expect((await driverProfileRepository.findByAddress('GDRIVER'))?.tier).toBe('BRONZE');
+    expect((await driverProfileRepository.findByAddress(testAddress('driver')))?.tier).toBe(
+      'BRONZE',
+    );
   });
 
   it('kyc_status_updated: refreshes kycVerified from get_driver_profile', async () => {
     const { driverProfileRepository, contractReader, syncReputationFromEvent } = setup();
     contractReader.seed(
-      'GDRIVER',
-      buildChainDriverProfile({ address: 'GDRIVER', kycVerified: true }),
+      testAddress('driver'),
+      buildChainDriverProfile({ address: testAddress('driver'), kycVerified: true }),
     );
 
     await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['kyc_status_updated'], payload: ['GDRIVER', true] }),
+      buildReputationEvent({
+        topic: ['kyc_status_updated'],
+        payload: [testAddress('driver'), true],
+      }),
     );
 
-    expect((await driverProfileRepository.findByAddress('GDRIVER'))?.kycVerified).toBe(true);
+    expect((await driverProfileRepository.findByAddress(testAddress('driver')))?.kycVerified).toBe(
+      true,
+    );
   });
 
   it('sets legacyDeliveriesCompleted from the supplementary delivery_contract read when it succeeds', async () => {
     const { driverProfileRepository, contractReader, legacyReader, syncReputationFromEvent } =
       setup();
-    contractReader.seed('GDRIVER', buildChainDriverProfile({ address: 'GDRIVER' }));
-    legacyReader.seed('GDRIVER', 7);
+    contractReader.seed(
+      testAddress('driver'),
+      buildChainDriverProfile({ address: testAddress('driver') }),
+    );
+    legacyReader.seed(testAddress('driver'), 7);
 
     await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['driver_registered'], payload: ['GDRIVER'] }),
+      buildReputationEvent({ topic: ['driver_registered'], payload: [testAddress('driver')] }),
     );
 
     expect(
-      (await driverProfileRepository.findByAddress('GDRIVER'))?.legacyDeliveriesCompleted,
+      (await driverProfileRepository.findByAddress(testAddress('driver')))
+        ?.legacyDeliveriesCompleted,
     ).toBe(7);
   });
 
@@ -154,17 +188,24 @@ describe('syncReputationFromEvent', () => {
     const { driverProfileRepository, contractReader, legacyReader, syncReputationFromEvent } =
       setup();
     driverProfileRepository.seed(
-      buildDriverProfile({ address: 'GDRIVER', legacyDeliveriesCompleted: 12 }),
+      buildDriverProfile({ address: testAddress('driver'), legacyDeliveriesCompleted: 12 }),
     );
-    contractReader.seed('GDRIVER', buildChainDriverProfile({ address: 'GDRIVER' }));
-    legacyReader.failFor('GDRIVER');
+    contractReader.seed(
+      testAddress('driver'),
+      buildChainDriverProfile({ address: testAddress('driver') }),
+    );
+    legacyReader.failFor(testAddress('driver'));
 
     await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['kyc_status_updated'], payload: ['GDRIVER', false] }),
+      buildReputationEvent({
+        topic: ['kyc_status_updated'],
+        payload: [testAddress('driver'), false],
+      }),
     );
 
     expect(
-      (await driverProfileRepository.findByAddress('GDRIVER'))?.legacyDeliveriesCompleted,
+      (await driverProfileRepository.findByAddress(testAddress('driver')))
+        ?.legacyDeliveriesCompleted,
     ).toBe(12);
   });
 
@@ -172,9 +213,9 @@ describe('syncReputationFromEvent', () => {
     const { driverProfileRepository, syncReputationFromEvent } = setup();
 
     await syncReputationFromEvent(
-      buildReputationEvent({ topic: ['user_registered'], payload: ['GUSER'] }),
+      buildReputationEvent({ topic: ['user_registered'], payload: [testAddress('user')] }),
     );
 
-    expect(await driverProfileRepository.findByAddress('GUSER')).toBeNull();
+    expect(await driverProfileRepository.findByAddress(testAddress('user'))).toBeNull();
   });
 });

@@ -14,3 +14,4 @@ export type {
   RaiseDisputeTxInput,
 } from './ports.js';
 export { DeliveryNotFoundError } from './errors.js';
+export { serializeDelivery, type SerializedDelivery } from './serialization.js';

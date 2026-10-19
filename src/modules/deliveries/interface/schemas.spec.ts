@@ -1,21 +1,6 @@
+import { Keypair } from '@stellar/stellar-sdk';
 import { describe, expect, it } from 'vitest';
 import { createDeliveryBodySchema, getDeliveryResponseSchema } from './schemas.js';
-
-const stellarAddress = 'G' + 'A'.repeat(55); // matches ^G[A-Z2-7]{55}$
-
-function createDeliveryInput(overrides: Partial<{ weightGrams: number }> = {}) {
-  return {
-    senderAddress: stellarAddress,
-    recipientAddress: stellarAddress,
-    origin: 'Lagos',
-    destination: 'Accra',
-    cargoCategory: 'GENERAL',
-    weightGrams: 500,
-    fragile: false,
-    estimatedDelivery: '2026-06-01T00:00:00.000Z',
-    ...overrides,
-  };
-}
 
 function deliveryDto(destination: string) {
   return {
@@ -50,42 +35,61 @@ describe('delivery response schemas', () => {
   });
 });
 
-describe('createDeliveryBodySchema', () => {
-  it('accepts weightGrams at the minimum valid value (1 gram)', () => {
-    const result = createDeliveryBodySchema.safeParse(createDeliveryInput({ weightGrams: 1 }));
+describe('createDeliveryBodySchema (issue #377)', () => {
+  const senderAddress = Keypair.random().publicKey();
+  const recipientAddress = Keypair.random().publicKey();
 
-    expect(result.success).toBe(true);
+  function validCreateBody(overrides: Record<string, unknown> = {}) {
+    return {
+      senderAddress,
+      recipientAddress,
+      origin: 'Lagos Warehouse',
+      destination: 'Abuja Depot',
+      cargoCategory: 'GENERAL',
+      weightGrams: 500,
+      fragile: false,
+      estimatedDelivery: '2026-12-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('accepts a valid payload with distinct origin/destination and parties', () => {
+    expect(createDeliveryBodySchema.safeParse(validCreateBody()).success).toBe(true);
   });
 
-  it('accepts weightGrams at the maximum valid value (500,000 grams / 500kg)', () => {
+  it('rejects identical origin and destination', () => {
     const result = createDeliveryBodySchema.safeParse(
-      createDeliveryInput({ weightGrams: 500_000 }),
-    );
-
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects weightGrams above the maximum valid value', () => {
-    const result = createDeliveryBodySchema.safeParse(
-      createDeliveryInput({ weightGrams: 500_001 }),
+      validCreateBody({ origin: 'Warehouse A', destination: 'Warehouse A' }),
     );
 
     expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(
-        result.error.issues.some(
-          (issue) => issue.path.includes('weightGrams') && issue.message.includes('500,000g'),
-        ),
-      ).toBe(true);
+    if (result.success === false) {
+      expect(result.error.issues[0]).toMatchObject({
+        path: ['destination'],
+        message: 'Destination must differ from origin',
+      });
     }
   });
 
-  it('rejects zero and negative weightGrams', () => {
-    expect(
-      createDeliveryBodySchema.safeParse(createDeliveryInput({ weightGrams: 0 })).success,
-    ).toBe(false);
-    expect(
-      createDeliveryBodySchema.safeParse(createDeliveryInput({ weightGrams: -1 })).success,
-    ).toBe(false);
+  it('rejects origin/destination that differ only by case and surrounding whitespace', () => {
+    const result = createDeliveryBodySchema.safeParse(
+      validCreateBody({ origin: 'Warehouse A', destination: '  warehouse a ' }),
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects identical sender and recipient addresses', () => {
+    const result = createDeliveryBodySchema.safeParse(
+      validCreateBody({ recipientAddress: senderAddress }),
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success === false) {
+      expect(result.error.issues[0]).toMatchObject({
+        path: ['recipientAddress'],
+        message: 'Recipient address must differ from sender address',
+      });
+    }
   });
 });

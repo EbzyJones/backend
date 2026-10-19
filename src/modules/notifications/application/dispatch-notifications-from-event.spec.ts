@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { testAddress } from '../../../shared/testing/addresses.js';
 import { createDispatchNotificationsFromEventUseCase } from './dispatch-notifications-from-event.js';
 import {
   buildBlockchainEvent,
+  createFakeDeliveryPartyLookup,
   createFakeNotificationJobScheduler,
   createFakeUserContactLookup,
   createInMemoryNotificationRepository,
@@ -10,15 +12,18 @@ import {
 function setup() {
   const notificationRepository = createInMemoryNotificationRepository();
   const userContactLookup = createFakeUserContactLookup();
+  const deliveryPartyLookup = createFakeDeliveryPartyLookup();
   const jobScheduler = createFakeNotificationJobScheduler();
   const dispatchNotificationsFromEvent = createDispatchNotificationsFromEventUseCase({
     notificationRepository,
     userContactLookup,
+    deliveryPartyLookup,
     jobScheduler,
   });
   return {
     notificationRepository,
     userContactLookup,
+    deliveryPartyLookup,
     jobScheduler,
     dispatchNotificationsFromEvent,
   };
@@ -32,13 +37,16 @@ describe('dispatchNotificationsFromEvent', () => {
       jobScheduler,
       dispatchNotificationsFromEvent,
     } = setup();
-    userContactLookup.seedAddress('GDRIVER', { userId: 'user-1', email: 'driver@example.com' });
+    userContactLookup.seedAddress(testAddress('driver'), {
+      userId: 'user-1',
+      email: 'driver@example.com',
+    });
 
     await dispatchNotificationsFromEvent(
       buildBlockchainEvent({
         contractName: 'delivery',
         topic: ['driver_assigned'],
-        payload: ['1', 'GDRIVER'],
+        payload: ['1', testAddress('driver')],
       }),
     );
 
@@ -53,15 +61,50 @@ describe('dispatchNotificationsFromEvent', () => {
     expect(jobScheduler.enqueued).toEqual([notification?.id]);
   });
 
+  it('delivery.delivery_confirmed: notifies sender and driver resolved via deliveryPartyLookup', async () => {
+    const {
+      notificationRepository,
+      userContactLookup,
+      deliveryPartyLookup,
+      jobScheduler,
+      dispatchNotificationsFromEvent,
+    } = setup();
+    deliveryPartyLookup.seedParties('1', {
+      sender: 'GSENDER',
+      recipient: 'GRECIPIENT',
+      driver: 'GDRIVER',
+    });
+    userContactLookup.seedAddress('GSENDER', { userId: 'user-1', email: 'sender@example.com' });
+    userContactLookup.seedAddress('GDRIVER', { userId: 'user-driver', email: 'driver@example.com' });
+
+    await dispatchNotificationsFromEvent(
+      buildBlockchainEvent({
+        contractName: 'delivery',
+        topic: ['delivery_confirmed'],
+        payload: ['1'],
+      }),
+    );
+
+    const notifications = notificationRepository.all();
+    expect(notifications).toHaveLength(2);
+    expect(notifications.map((n) => n.userId).sort()).toEqual(['user-1', 'user-driver']);
+    expect(notifications.every((n) => n.type === 'delivery.delivery_confirmed')).toBe(true);
+    expect(notifications.every((n) => n.payload.chainDeliveryId === '1')).toBe(true);
+    expect(jobScheduler.enqueued).toHaveLength(2);
+  });
+
   it('escrow.delivery_disputed: notifies the disputing party, reading the id from the topic', async () => {
     const { notificationRepository, userContactLookup, dispatchNotificationsFromEvent } = setup();
-    userContactLookup.seedAddress('GSENDER', { userId: 'user-2', email: 'sender@example.com' });
+    userContactLookup.seedAddress(testAddress('sender'), {
+      userId: 'user-2',
+      email: 'sender@example.com',
+    });
 
     await dispatchNotificationsFromEvent(
       buildBlockchainEvent({
         contractName: 'escrow',
         topic: ['delivery_disputed', '7'],
-        payload: ['GSENDER'],
+        payload: [testAddress('sender')],
       }),
     );
 
@@ -72,7 +115,7 @@ describe('dispatchNotificationsFromEvent', () => {
 
   it('escrow.escrow_released: notifies the driver, reading the id from the topic and the address from payload[0]', async () => {
     const { notificationRepository, userContactLookup, dispatchNotificationsFromEvent } = setup();
-    userContactLookup.seedAddress('GDRIVER', {
+    userContactLookup.seedAddress(testAddress('driver'), {
       userId: 'user-driver',
       email: 'driver@example.com',
     });
@@ -81,7 +124,7 @@ describe('dispatchNotificationsFromEvent', () => {
       buildBlockchainEvent({
         contractName: 'escrow',
         topic: ['escrow_released', '9'],
-        payload: ['GDRIVER', '1000', '25'],
+        payload: [testAddress('driver'), '1000', '25'],
       }),
     );
 
@@ -92,13 +135,16 @@ describe('dispatchNotificationsFromEvent', () => {
 
   it('dispute.dispute_raised: notifies the raiser, parsing the tuple-wrapped delivery id', async () => {
     const { notificationRepository, userContactLookup, dispatchNotificationsFromEvent } = setup();
-    userContactLookup.seedAddress('GRAISER', { userId: 'user-3', email: 'raiser@example.com' });
+    userContactLookup.seedAddress(testAddress('raiser'), {
+      userId: 'user-3',
+      email: 'raiser@example.com',
+    });
 
     await dispatchNotificationsFromEvent(
       buildBlockchainEvent({
         contractName: 'dispute-resolution',
         topic: ['dispute_raised', '["3"]'],
-        payload: ['GRAISER'],
+        payload: [testAddress('raiser')],
       }),
     );
 
@@ -114,13 +160,16 @@ describe('dispatchNotificationsFromEvent', () => {
     'reputation_decreased',
   ])('identity-reputation %s: notifies the driver', async (eventName) => {
     const { notificationRepository, userContactLookup, dispatchNotificationsFromEvent } = setup();
-    userContactLookup.seedAddress('GDRIVER', { userId: 'user-4', email: 'driver@example.com' });
+    userContactLookup.seedAddress(testAddress('driver'), {
+      userId: 'user-4',
+      email: 'driver@example.com',
+    });
 
     await dispatchNotificationsFromEvent(
       buildBlockchainEvent({
         contractName: 'identity-reputation',
         topic: [eventName],
-        payload: ['GDRIVER', '10'],
+        payload: [testAddress('driver'), '10'],
       }),
     );
 
@@ -131,13 +180,16 @@ describe('dispatchNotificationsFromEvent', () => {
 
   it('fleet.fleet_registered: notifies the fleet owner', async () => {
     const { notificationRepository, userContactLookup, dispatchNotificationsFromEvent } = setup();
-    userContactLookup.seedAddress('GOWNER', { userId: 'user-5', email: 'owner@example.com' });
+    userContactLookup.seedAddress(testAddress('owner'), {
+      userId: 'user-5',
+      email: 'owner@example.com',
+    });
 
     await dispatchNotificationsFromEvent(
       buildBlockchainEvent({
         contractName: 'fleet',
         topic: ['fleet_registered'],
-        payload: ['1', 'GOWNER', 'GTREASURY'],
+        payload: ['1', testAddress('owner'), testAddress('treasury')],
       }),
     );
 
@@ -150,13 +202,16 @@ describe('dispatchNotificationsFromEvent', () => {
     'fleet.%s: notifies the driver',
     async (eventName) => {
       const { notificationRepository, userContactLookup, dispatchNotificationsFromEvent } = setup();
-      userContactLookup.seedAddress('GDRIVER', { userId: 'user-6', email: 'driver@example.com' });
+      userContactLookup.seedAddress(testAddress('driver'), {
+        userId: 'user-6',
+        email: 'driver@example.com',
+      });
 
       await dispatchNotificationsFromEvent(
         buildBlockchainEvent({
           contractName: 'fleet',
           topic: [eventName],
-          payload: ['1', 'GDRIVER'],
+          payload: ['1', testAddress('driver')],
         }),
       );
 
@@ -168,13 +223,16 @@ describe('dispatchNotificationsFromEvent', () => {
 
   it('skips delivery_created even though its payload does carry an address (sender) — self-action, not a useful notification', async () => {
     const { notificationRepository, userContactLookup, dispatchNotificationsFromEvent } = setup();
-    userContactLookup.seedAddress('GSENDER', { userId: 'user-7', email: 'sender@example.com' });
+    userContactLookup.seedAddress(testAddress('sender'), {
+      userId: 'user-7',
+      email: 'sender@example.com',
+    });
 
     await dispatchNotificationsFromEvent(
       buildBlockchainEvent({
         contractName: 'delivery',
         topic: ['delivery_created'],
-        payload: ['1', 'GSENDER'],
+        payload: ['1', testAddress('sender')],
       }),
     );
 
@@ -202,7 +260,7 @@ describe('dispatchNotificationsFromEvent', () => {
       buildBlockchainEvent({
         contractName: 'delivery',
         topic: ['driver_assigned'],
-        payload: ['1', 'GUNLINKED'],
+        payload: ['1', testAddress('unlinked')],
       }),
     );
 

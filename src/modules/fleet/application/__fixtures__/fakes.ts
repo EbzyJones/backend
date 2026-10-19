@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
   ChainFleetRecord,
@@ -126,8 +127,8 @@ export function createFakeFleetTransactionBuilder(): FleetTransactionBuilder {
 export function buildChainFleetRecord(overrides: Partial<ChainFleetRecord> = {}): ChainFleetRecord {
   return {
     chainFleetId: 1n,
-    ownerAddress: 'GOWNER',
-    treasuryAddress: 'GTREASURY',
+    ownerAddress: testAddress('owner'),
+    treasuryAddress: testAddress('treasury'),
     ...overrides,
   };
 }
@@ -135,7 +136,7 @@ export function buildChainFleetRecord(overrides: Partial<ChainFleetRecord> = {})
 export function buildFleetDriver(overrides: Partial<FleetDriver> = {}): FleetDriver {
   return {
     id: randomUUID(),
-    driverAddress: 'GDRIVER',
+    driverAddress: testAddress('driver'),
     status: 'PENDING',
     invitedAt: new Date(),
     acceptedAt: null,
@@ -167,7 +168,7 @@ export function buildFleetEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['fleet_registered'],
-    payload: ['1', 'GOWNER', 'GTREASURY'],
+    payload: ['1', testAddress('owner'), testAddress('treasury')],
     closedAt: new Date(),
     ...overrides,
   };

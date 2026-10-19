@@ -3,6 +3,7 @@ import type { UserRole } from '@prisma/client';
 import { verifyAccessToken } from '../../jwt/index.js';
 import { UnauthorizedError, ForbiddenError } from '../../errors/index.js';
 import { getPrismaClient } from '../../database/index.js';
+import { readAuthContext, writeAuthContext } from '../../cache/index.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -28,6 +29,17 @@ declare module 'fastify' {
  * fresh from this same lookup (not from the token's claim) as defense in
  * depth, at no extra cost since the row is already being fetched.
  *
+ * The `role`/`tokenVersion` pair is served from a short-TTL Redis cache
+ * first (#369, `shared/cache/auth-context-cache.ts`) so the check doesn't
+ * cost one `users` lookup per authenticated request under load. Two
+ * properties keep the #12 guarantee intact despite the cache: (1) role
+ * changes evict the entry the moment their transaction commits
+ * (`AuthCacheInvalidator`, wired in `src/modules/admin`) — the TTL is only
+ * a backstop for eviction failures, never the primary invalidation path;
+ * (2) every cache failure (outage, corrupt entry) degrades to the original
+ * per-request database lookup rather than skipping the check — an
+ * unreachable cache must never widen privileges or reject valid requests.
+ *
  * Uses the shared Prisma singleton directly (matching the existing
  * `shared/http/routes/health.ts` precedent) rather than threading a
  * dependency through every one of this function's ~10 call sites — it's
@@ -50,10 +62,17 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
     throw new UnauthorizedError('Invalid or expired access token');
   }
 
-  const currentUser = await getPrismaClient().user.findUnique({
-    where: { id: claims.sub },
-    select: { role: true, tokenVersion: true },
-  });
+  let currentUser = await readAuthContext(claims.sub);
+  if (!currentUser) {
+    const row = await getPrismaClient().user.findUnique({
+      where: { id: claims.sub },
+      select: { role: true, tokenVersion: true },
+    });
+    if (row) {
+      currentUser = { role: row.role, tokenVersion: row.tokenVersion };
+      await writeAuthContext(claims.sub, currentUser);
+    }
+  }
 
   // Tokens issued before `tokenVersion` existed carry no such claim —
   // treated as version 0 (the column's default) so they keep working

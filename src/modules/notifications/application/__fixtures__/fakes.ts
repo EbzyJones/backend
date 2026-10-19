@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { testAddress } from '../../../../shared/testing/addresses.js';
 import type { BlockchainEventEnvelope } from '../../../../shared/events/index.js';
 import type {
+  DeliveryParties,
+  DeliveryPartyLookup,
   Notification,
   NotificationJobScheduler,
   NotificationRepository,
@@ -116,6 +119,21 @@ export function createFakeNotificationJobScheduler(): NotificationJobScheduler &
   };
 }
 
+export function createFakeDeliveryPartyLookup(): DeliveryPartyLookup & {
+  seedParties(chainDeliveryId: string, parties: DeliveryParties): void;
+} {
+  const byDeliveryId = new Map<string, DeliveryParties>();
+
+  return {
+    seedParties(chainDeliveryId, parties) {
+      byDeliveryId.set(chainDeliveryId, parties);
+    },
+    async findParties(chainDeliveryId) {
+      return byDeliveryId.get(chainDeliveryId) ?? null;
+    },
+  };
+}
+
 export function buildNotification(overrides: Partial<Notification> = {}): Notification {
   return {
     id: randomUUID(),
@@ -140,7 +158,7 @@ export function buildBlockchainEvent(
     ledgerSeq: 1000n,
     txHash: 'tx-hash',
     topic: ['driver_assigned'],
-    payload: ['1', 'GDRIVER'],
+    payload: ['1', testAddress('driver')],
     closedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,
   };

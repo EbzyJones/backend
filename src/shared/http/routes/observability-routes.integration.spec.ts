@@ -58,6 +58,9 @@ describe.skipIf(!dbAvailable)('observability routes (integration)', () => {
     expect(response.body).toContain('http_request_duration_seconds');
     expect(response.body).toContain('queue_jobs');
     expect(response.body).toContain('process_cpu_user_seconds_total');
+    // Event-subscriber failures (issue #348) — a counter registered even
+    // with zero series, so alerts can exist before the first failure.
+    expect(response.body).toContain('event_subscriber_errors_total');
   });
 
   it('GET /metrics is unauthenticated', async () => {

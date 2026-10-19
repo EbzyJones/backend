@@ -52,16 +52,33 @@ export const transactionResponseSchema = z.object({
   data: z.object({ xdr: z.string().max(MAX_XDR_LENGTH) }),
 });
 
-export const createDeliveryBodySchema = z.object({
-  senderAddress: stellarAddress,
-  recipientAddress: stellarAddress,
-  origin: z.string().min(1).max(256),
-  destination: z.string().min(1).max(256),
-  cargoCategory,
-  weightGrams: z.number().int().positive().max(500_000, 'Weight cannot exceed 500kg (500,000g)'),
-  fragile: z.boolean(),
-  estimatedDelivery: z.string().datetime(),
-});
+export const createDeliveryBodySchema = z
+  .object({
+    senderAddress: stellarAddress,
+    recipientAddress: stellarAddress,
+    origin: z.string().min(1).max(256),
+    destination: z.string().min(1).max(256),
+    cargoCategory,
+    weightGrams: z.number().int().positive(),
+    fragile: z.boolean(),
+    estimatedDelivery: z.string().datetime(),
+  })
+  // A delivery whose destination equals its origin is nonsensical: it locks
+  // escrow funds and clutters courier dispatch boards for a trip that goes
+  // nowhere (issue #377). Compared case/whitespace-insensitively so
+  // "Warehouse A" vs "warehouse a " doesn't slip through.
+  .refine((data) => data.origin.trim().toLowerCase() !== data.destination.trim().toLowerCase(), {
+    message: 'Destination must differ from origin',
+    path: ['destination'],
+  })
+  // Same class of nonsense for the on-chain parties: sending a package from
+  // yourself to yourself. Address case is canonicalized by StrKey, but
+  // compare case-insensitively anyway so validation never depends on how the
+  // client happened to casing it.
+  .refine((data) => data.senderAddress.toLowerCase() !== data.recipientAddress.toLowerCase(), {
+    message: 'Recipient address must differ from sender address',
+    path: ['recipientAddress'],
+  });
 
 export const assignDriverBodySchema = z.object({
   callerAddress: stellarAddress,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { testAddress } from '../../../shared/testing/addresses.js';
 import { createSyncFleetFromEventUseCase } from './sync-fleet-from-event.js';
 import {
   buildFleetEvent,
@@ -27,13 +28,13 @@ describe('syncFleetFromEvent', () => {
     await syncFleetFromEvent(
       buildFleetEvent({
         topic: ['fleet_registered'],
-        payload: ['7', 'GOWNER', 'GTREASURY'],
+        payload: ['7', testAddress('owner'), testAddress('treasury')],
       }),
     );
 
     const stored = await fleetRepository.findByChainFleetId(7n);
-    expect(stored?.ownerAddress).toBe('GOWNER');
-    expect(stored?.treasuryAddress).toBe('GTREASURY');
+    expect(stored?.ownerAddress).toBe(testAddress('owner'));
+    expect(stored?.treasuryAddress).toBe(testAddress('treasury'));
   });
 
   it('fleet_treasury_updated: updates the treasury address', async () => {
@@ -41,10 +42,15 @@ describe('syncFleetFromEvent', () => {
     fleetRepository.seed(buildFleetWithDrivers({ chainFleetId: 1n, treasuryAddress: 'GOLD' }));
 
     await syncFleetFromEvent(
-      buildFleetEvent({ topic: ['fleet_treasury_updated'], payload: ['1', 'GOWNER', 'GNEW'] }),
+      buildFleetEvent({
+        topic: ['fleet_treasury_updated'],
+        payload: ['1', testAddress('owner'), testAddress('new-treasury')],
+      }),
     );
 
-    expect((await fleetRepository.findByChainFleetId(1n))?.treasuryAddress).toBe('GNEW');
+    expect((await fleetRepository.findByChainFleetId(1n))?.treasuryAddress).toBe(
+      testAddress('new-treasury'),
+    );
   });
 
   it('driver_invited: adds a PENDING driver row with invitedAt from ledger close time', async () => {
@@ -53,13 +59,17 @@ describe('syncFleetFromEvent', () => {
     const closedAt = new Date('2026-01-01T00:00:00Z');
 
     await syncFleetFromEvent(
-      buildFleetEvent({ topic: ['driver_invited'], payload: ['1', 'GDRIVER'], closedAt }),
+      buildFleetEvent({
+        topic: ['driver_invited'],
+        payload: ['1', testAddress('driver')],
+        closedAt,
+      }),
     );
 
     const stored = await fleetRepository.findByChainFleetId(1n);
     expect(stored?.drivers).toHaveLength(1);
     expect(stored?.drivers[0]).toMatchObject({
-      driverAddress: 'GDRIVER',
+      driverAddress: testAddress('driver'),
       status: 'PENDING',
       invitedAt: closedAt,
     });
@@ -69,12 +79,16 @@ describe('syncFleetFromEvent', () => {
     const { fleetRepository, syncFleetFromEvent } = setup();
     fleetRepository.seed(buildFleetWithDrivers({ chainFleetId: 1n }));
     await syncFleetFromEvent(
-      buildFleetEvent({ topic: ['driver_invited'], payload: ['1', 'GDRIVER'] }),
+      buildFleetEvent({ topic: ['driver_invited'], payload: ['1', testAddress('driver')] }),
     );
     const closedAt = new Date('2026-01-02T00:00:00Z');
 
     await syncFleetFromEvent(
-      buildFleetEvent({ topic: ['invite_accepted'], payload: ['1', 'GDRIVER'], closedAt }),
+      buildFleetEvent({
+        topic: ['invite_accepted'],
+        payload: ['1', testAddress('driver')],
+        closedAt,
+      }),
     );
 
     const stored = await fleetRepository.findByChainFleetId(1n);
@@ -86,15 +100,19 @@ describe('syncFleetFromEvent', () => {
     const { fleetRepository, syncFleetFromEvent } = setup();
     fleetRepository.seed(buildFleetWithDrivers({ chainFleetId: 1n }));
     await syncFleetFromEvent(
-      buildFleetEvent({ topic: ['driver_invited'], payload: ['1', 'GDRIVER'] }),
+      buildFleetEvent({ topic: ['driver_invited'], payload: ['1', testAddress('driver')] }),
     );
     await syncFleetFromEvent(
-      buildFleetEvent({ topic: ['invite_accepted'], payload: ['1', 'GDRIVER'] }),
+      buildFleetEvent({ topic: ['invite_accepted'], payload: ['1', testAddress('driver')] }),
     );
     const closedAt = new Date('2026-01-03T00:00:00Z');
 
     await syncFleetFromEvent(
-      buildFleetEvent({ topic: ['driver_removed'], payload: ['1', 'GDRIVER'], closedAt }),
+      buildFleetEvent({
+        topic: ['driver_removed'],
+        payload: ['1', testAddress('driver')],
+        closedAt,
+      }),
     );
 
     const stored = await fleetRepository.findByChainFleetId(1n);

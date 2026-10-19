@@ -88,4 +88,55 @@ describe.skipIf(!dbAvailable)('Prisma escrow repository (integration)', () => {
 
     await expect(escrowRepository.create(record)).rejects.toThrow();
   });
+
+  describe('transaction atomicity (#387)', () => {
+    it('rolls back escrow status update when a secondary query fails', async () => {
+      const chainDeliveryId = await nextChainId();
+      await escrowRepository.create(buildChainEscrowRecord({ chainDeliveryId, status: 'LOCKED' }));
+
+      await expect(
+        escrowRepository.updateStatus(
+          chainDeliveryId,
+          { status: 'RELEASED', releasedAt: new Date() },
+          async () => {
+            // Simulated crash or failure in secondary query (audit logging / correlation)
+            throw new Error('Simulated failure in secondary query');
+          },
+        ),
+      ).rejects.toThrow('Simulated failure in secondary query');
+
+      // Escrow status must remain strictly unchanged in the database (ACID rollback)
+      const persisted = await escrowRepository.findByChainDeliveryId(chainDeliveryId);
+      expect(persisted?.status).toBe('LOCKED');
+      expect(persisted?.releasedAt).toBeNull();
+    });
+
+    it('commits escrow status update and secondary correlated write together atomically', async () => {
+      const chainDeliveryId = await nextChainId();
+      await escrowRepository.create(buildChainEscrowRecord({ chainDeliveryId, status: 'LOCKED' }));
+      const releasedAt = new Date('2026-06-01T00:00:00Z');
+
+      let secondaryExecuted = false;
+      await escrowRepository.updateStatus(
+        chainDeliveryId,
+        { status: 'RELEASED', releasedAt },
+        async (tx) => {
+          // Secondary write within same transaction boundary
+          await (tx as PrismaClient).delivery.update({
+            where: { chainDeliveryId },
+            data: { status: 'DELIVERED' },
+          });
+          secondaryExecuted = true;
+        },
+      );
+
+      expect(secondaryExecuted).toBe(true);
+      const updatedEscrow = await escrowRepository.findByChainDeliveryId(chainDeliveryId);
+      expect(updatedEscrow?.status).toBe('RELEASED');
+      expect(updatedEscrow?.releasedAt).toEqual(releasedAt);
+
+      const updatedDelivery = await prisma.delivery.findUnique({ where: { chainDeliveryId } });
+      expect(updatedDelivery?.status).toBe('DELIVERED');
+    });
+  });
 });
