@@ -7,6 +7,7 @@ import type {
   createGetMyProfileUseCase,
   createListWalletsUseCase,
   createRequestWalletLinkChallengeUseCase,
+  createSetPrimaryWalletUseCase,
   createUnlinkWalletUseCase,
 } from '../application/index.js';
 import {
@@ -26,6 +27,7 @@ export interface UsersUseCases {
   confirmWalletLink: ReturnType<typeof createConfirmWalletLinkUseCase>;
   listWallets: ReturnType<typeof createListWalletsUseCase>;
   unlinkWallet: ReturnType<typeof createUnlinkWalletUseCase>;
+  setPrimaryWallet: ReturnType<typeof createSetPrimaryWalletUseCase>;
 }
 
 function serializeWallet(wallet: WalletAddressRecord) {
@@ -53,7 +55,6 @@ export function createUsersRoutes(useCases: UsersUseCases): FastifyPluginAsyncZo
     app.get(
       '/users/me',
       {
-        onRequest: [authenticate],
         preHandler: authenticate,
         schema: { response: { 200: profileResponseSchema } },
       },
@@ -127,6 +128,21 @@ export function createUsersRoutes(useCases: UsersUseCases): FastifyPluginAsyncZo
           walletId: request.params.id,
         });
         void reply.status(200).send(ok({}));
+      },
+    );
+
+    app.put(
+      '/users/me/wallets/:id/primary',
+      {
+        preHandler: authenticate,
+        schema: { params: walletIdParamsSchema, response: { 200: walletResponseSchema } },
+      },
+      async (request, reply) => {
+        const wallet = await useCases.setPrimaryWallet({
+          userId: requireUserId(request),
+          walletId: request.params.id,
+        });
+        void reply.status(200).send(ok(serializeWallet(wallet)));
       },
     );
   };

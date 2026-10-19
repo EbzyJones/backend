@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createConfirmWalletLinkUseCase } from './confirm-wallet-link.js';
 import {
+  ChallengeExpiredError,
   InvalidWalletChallengeError,
   InvalidWalletSignatureError,
   WalletAlreadyLinkedError,
@@ -65,7 +66,27 @@ describe('confirmWalletLink', () => {
     expect(wallet.isPrimary).toBe(false);
   });
 
-  it('is idempotent when re-confirming the same user’s already-linked wallet', async () => {
+  it('is idempotent when re-confirming the same user’s already-linked wallet with a fresh challenge', async () => {
+    const { challengeService, confirmWalletLink } = setup();
+    const userId = randomUUID();
+    const address = 'GABC...';
+    const challenge1 = challengeService.issuedFor(userId, address, Date.now() + 60_000);
+    const signature1 = `valid-signature-for:${challenge1}`;
+
+    await confirmWalletLink({ userId, address, challenge: challenge1, signature: signature1 });
+
+    const challenge2 = challengeService.issuedFor(userId, address, Date.now() + 60_000);
+    const signature2 = `valid-signature-for:${challenge2}`;
+
+    await expect(
+      confirmWalletLink({ userId, address, challenge: challenge2, signature: signature2 }),
+    ).resolves.toMatchObject({
+      userId,
+      address,
+    });
+  });
+
+  it('rejects reusing the same challenge token twice (replay attack prevention)', async () => {
     const { challengeService, confirmWalletLink } = setup();
     const userId = randomUUID();
     const address = 'GABC...';
@@ -73,12 +94,25 @@ describe('confirmWalletLink', () => {
     const signature = `valid-signature-for:${challenge}`;
 
     await confirmWalletLink({ userId, address, challenge, signature });
-    await expect(
-      confirmWalletLink({ userId, address, challenge, signature }),
-    ).resolves.toMatchObject({
-      userId,
-      address,
-    });
+
+    await expect(confirmWalletLink({ userId, address, challenge, signature })).rejects.toThrow(
+      ChallengeExpiredError,
+    );
+  });
+
+  it('rejects replaying a consumed challenge after unlinking the wallet', async () => {
+    const { challengeService, confirmWalletLink, walletAddressRepository } = setup();
+    const userId = randomUUID();
+    const address = 'GABC...';
+    const challenge = challengeService.issuedFor(userId, address, Date.now() + 60_000);
+    const signature = `valid-signature-for:${challenge}`;
+
+    const wallet = await confirmWalletLink({ userId, address, challenge, signature });
+    await walletAddressRepository.remove(wallet.id);
+
+    await expect(confirmWalletLink({ userId, address, challenge, signature })).rejects.toThrow(
+      ChallengeExpiredError,
+    );
   });
 
   it('rejects a challenge issued for a different address', async () => {

@@ -40,3 +40,9 @@ export class InvalidWalletSignatureError extends UnauthorizedError {
     super('Signature does not match the claimed wallet address');
   }
 }
+
+export class ChallengeExpiredError extends ConflictError {
+  constructor(message = 'Wallet link challenge has already been used or expired') {
+    super(message);
+  }
+}

@@ -25,3 +25,8 @@ export {
   type UnlinkWalletDeps,
   type UnlinkWalletInput,
 } from './unlink-wallet.js';
+export {
+  createSetPrimaryWalletUseCase,
+  type SetPrimaryWalletDeps,
+  type SetPrimaryWalletInput,
+} from './set-primary-wallet.js';

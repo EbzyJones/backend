@@ -60,4 +60,57 @@ describe.skipIf(!dbAvailable)('Prisma users repositories (integration)', () => {
     await walletAddressRepository.remove(created.id);
     expect(await walletAddressRepository.findById(created.id)).toBeNull();
   });
+
+  it('promotes a wallet to primary and demotes previously primary wallet atomically', async () => {
+    const userId = await seedUser();
+    const address1 = `G${randomUUID().replace(/-/g, '').toUpperCase()}`;
+    const address2 = `G${randomUUID().replace(/-/g, '').toUpperCase()}`;
+
+    const wallet1 = await walletAddressRepository.create({
+      userId,
+      address: address1,
+      isPrimary: true,
+      verifiedAt: new Date(),
+    });
+
+    const wallet2 = await walletAddressRepository.create({
+      userId,
+      address: address2,
+      isPrimary: false,
+      verifiedAt: new Date(),
+    });
+
+    const promoted = await walletAddressRepository.setPrimary(userId, wallet2.id);
+    expect(promoted.isPrimary).toBe(true);
+
+    const refetched1 = await walletAddressRepository.findById(wallet1.id);
+    const refetched2 = await walletAddressRepository.findById(wallet2.id);
+
+    expect(refetched1?.isPrimary).toBe(false);
+    expect(refetched2?.isPrimary).toBe(true);
+  });
+
+  it('database constraint prevents two primary wallets for the same user', async () => {
+    const userId = await seedUser();
+    const address1 = `G${randomUUID().replace(/-/g, '').toUpperCase()}`;
+    const address2 = `G${randomUUID().replace(/-/g, '').toUpperCase()}`;
+
+    await walletAddressRepository.create({
+      userId,
+      address: address1,
+      isPrimary: true,
+      verifiedAt: new Date(),
+    });
+
+    // Attempting to insert a second is_primary = true for the same user must violate
+    // the partial unique index `wallet_addresses_user_id_primary_key`.
+    await expect(
+      walletAddressRepository.create({
+        userId,
+        address: address2,
+        isPrimary: true,
+        verifiedAt: new Date(),
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
 });
