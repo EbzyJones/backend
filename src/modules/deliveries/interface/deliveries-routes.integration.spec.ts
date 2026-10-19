@@ -87,30 +87,38 @@ describe.skipIf(!dbAvailable)('deliveries routes (integration)', () => {
   }
 
   it('lists deliveries filtered by sender address', async () => {
-    const sender = `GFILTER-${randomUUID()}`;
+    const { accessToken } = await registerUser();
+    const sender = Keypair.random().publicKey();
     const chainDeliveryId = await seedDelivery({ senderAddress: sender });
 
     const response = await app.inject({
       method: 'GET',
       url: `/api/v1/deliveries?senderAddress=${sender}`,
+      headers: { authorization: `Bearer ${accessToken}` },
     });
 
     expect(response.statusCode).toBe(200);
     const body = response.json<SuccessBody<Array<{ chainDeliveryId: string }>>>();
     expect(body.data).toHaveLength(1);
+    expect(typeof body.data[0]?.chainDeliveryId).toBe('string');
     expect(body.data[0]?.chainDeliveryId).toBe(chainDeliveryId.toString());
   });
 
-  it('gets a single delivery by chain id', async () => {
+  it('gets a single delivery by chain id and serializes chainDeliveryId as string', async () => {
+    const { accessToken } = await registerUser();
     const chainDeliveryId = await seedDelivery();
 
     const response = await app.inject({
       method: 'GET',
       url: `/api/v1/deliveries/${chainDeliveryId.toString()}`,
+      headers: { authorization: `Bearer ${accessToken}` },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json<SuccessBody<{ status: string }>>().data.status).toBe('PENDING');
+    const body = response.json<SuccessBody<{ chainDeliveryId: string; status: string }>>();
+    expect(body.data.status).toBe('PENDING');
+    expect(typeof body.data.chainDeliveryId).toBe('string');
+    expect(body.data.chainDeliveryId).toBe(chainDeliveryId.toString());
   });
 
   it('rejects an unauthenticated single-delivery request', async () => {
@@ -123,7 +131,12 @@ describe.skipIf(!dbAvailable)('deliveries routes (integration)', () => {
   });
 
   it('returns 404 for an unknown delivery', async () => {
-    const response = await app.inject({ method: 'GET', url: '/api/v1/deliveries/999999999999999' });
+    const { accessToken } = await registerUser();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/deliveries/999999999999999',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
 
     expect(response.statusCode).toBe(404);
     expect(response.json<ErrorBody>().error.code).toBe('NOT_FOUND');

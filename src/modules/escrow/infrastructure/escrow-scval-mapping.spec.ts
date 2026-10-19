@@ -29,6 +29,61 @@ describe('createEscrowArgsToScVal', () => {
     expect(scValToNative(args[4]!)).toBe(token);
     expect(scValToNative(args[5]!)).toBe('1000000');
   });
+
+  it('rejects createEscrowArgsToScVal with amount: 0n', () => {
+    const sender = Keypair.random().publicKey();
+    const recipient = Keypair.random().publicKey();
+    const driver = Keypair.random().publicKey();
+    const token = Keypair.random().publicKey();
+
+    expect(() =>
+      createEscrowArgsToScVal({
+        senderAddress: sender,
+        recipientAddress: recipient,
+        driverAddress: driver,
+        chainDeliveryId: 42n,
+        token,
+        amount: 0n,
+      }),
+    ).toThrow(/amount must be greater than zero/);
+  });
+
+  it('rejects createEscrowArgsToScVal with negative amount: -100n', () => {
+    const sender = Keypair.random().publicKey();
+    const recipient = Keypair.random().publicKey();
+    const driver = Keypair.random().publicKey();
+    const token = Keypair.random().publicKey();
+
+    expect(() =>
+      createEscrowArgsToScVal({
+        senderAddress: sender,
+        recipientAddress: recipient,
+        driverAddress: driver,
+        chainDeliveryId: 42n,
+        token,
+        amount: -100n,
+      }),
+    ).toThrow(/amount must be greater than zero/);
+  });
+
+  it('successfully creates ScVals with amount: 10000000n', () => {
+    const sender = Keypair.random().publicKey();
+    const recipient = Keypair.random().publicKey();
+    const driver = Keypair.random().publicKey();
+    const token = Keypair.random().publicKey();
+
+    const args = createEscrowArgsToScVal({
+      senderAddress: sender,
+      recipientAddress: recipient,
+      driverAddress: driver,
+      chainDeliveryId: 42n,
+      token,
+      amount: 10_000_000n,
+    });
+
+    expect(args).toHaveLength(6);
+    expect(scValToNative(args[5]!)).toBe('10000000');
+  });
 });
 
 /** Hand-builds a `get_escrow`-shaped ScVal using the same low-level encoders

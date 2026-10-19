@@ -20,6 +20,7 @@ describe.skipIf(!dbAvailable)('escrow routes (integration)', () => {
   let app: Awaited<ReturnType<typeof buildApp>>;
   const prisma = new PrismaClient();
   const createdChainIds: bigint[] = [];
+  const createdEmails: string[] = [];
 
   beforeAll(async () => {
     app = await buildApp();
@@ -31,9 +32,31 @@ describe.skipIf(!dbAvailable)('escrow routes (integration)', () => {
       await prisma.escrow.deleteMany({ where: { chainDeliveryId: { in: createdChainIds } } });
       await prisma.delivery.deleteMany({ where: { chainDeliveryId: { in: createdChainIds } } });
     }
+    if (createdEmails.length > 0) {
+      const users = await prisma.user.findMany({ where: { email: { in: createdEmails } } });
+      const userIds = users.map((user) => user.id);
+      await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    }
     await prisma.$disconnect();
     await disconnectPrisma();
   });
+
+  async function registerUser(): Promise<{ accessToken: string }> {
+    const email = `escrow-test-${randomUUID()}@example.com`;
+    createdEmails.push(email);
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email, password: 'password123' },
+    });
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email, password: 'password123' },
+    });
+    return { accessToken: login.json<SuccessBody<{ accessToken: string }>>().data.accessToken };
+  }
 
   function nextChainId(): bigint {
     const id = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
@@ -121,12 +144,12 @@ describe.skipIf(!dbAvailable)('escrow routes (integration)', () => {
   // createUnconfiguredContractClient() fallback in ../index.ts — rather than
   // a generic failure. Fails if that fallback wiring is removed.
   it('returns 502 BLOCKCHAIN_ERROR from a build endpoint when the contract id is unconfigured', async () => {
-    const token = signAccessToken({ sub: randomUUID(), role: 'ADMIN' });
+    const { accessToken } = await registerUser();
 
     const response = await app.inject({
       method: 'POST',
       url: '/api/v1/transactions/build/release-escrow',
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${accessToken}` },
       payload: { callerAddress: Keypair.random().publicKey(), chainDeliveryId: '1' },
     });
 
@@ -134,5 +157,47 @@ describe.skipIf(!dbAvailable)('escrow routes (integration)', () => {
     const body = response.json<ErrorBody>();
     expect(body.error.code).toBe('BLOCKCHAIN_ERROR');
     expect(body.error.message).toContain('ESCROW_CONTRACT_ID');
+  });
+
+  it('rejects create-escrow transaction-build with amount: "0" with 400 VALIDATION_ERROR', async () => {
+    const { accessToken } = await registerUser();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/transactions/build/create-escrow',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        senderAddress: Keypair.random().publicKey(),
+        recipientAddress: Keypair.random().publicKey(),
+        driverAddress: Keypair.random().publicKey(),
+        chainDeliveryId: '1',
+        token: Keypair.random().publicKey(),
+        amount: '0',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json<ErrorBody>();
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects create-escrow transaction-build with negative amount "-100" with 400 VALIDATION_ERROR', async () => {
+    const { accessToken } = await registerUser();
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/transactions/build/create-escrow',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        senderAddress: Keypair.random().publicKey(),
+        recipientAddress: Keypair.random().publicKey(),
+        driverAddress: Keypair.random().publicKey(),
+        chainDeliveryId: '1',
+        token: Keypair.random().publicKey(),
+        amount: '-100',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json<ErrorBody>();
+    expect(body.error.code).toBe('VALIDATION_ERROR');
   });
 });

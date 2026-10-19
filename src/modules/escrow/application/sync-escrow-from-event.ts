@@ -1,11 +1,14 @@
 import type { BlockchainEventEnvelope } from '../../../shared/events/index.js';
 import { parseAddress, parseBigIntId } from '../../../shared/events/index.js';
 import { ContractName } from '../../../shared/events/contract-names.js';
+import type { Logger } from '../../../shared/logger/index.js';
 import type { EscrowContractReader, EscrowRepository } from '../domain/index.js';
 
 export interface SyncEscrowFromEventDeps {
   escrowRepository: EscrowRepository;
   contractReader: EscrowContractReader;
+  allowedTokens?: string[] | undefined;
+  logger?: Logger | undefined;
 }
 
 /**
@@ -38,7 +41,17 @@ export function createSyncEscrowFromEventUseCase(deps: SyncEscrowFromEventDeps) 
     switch (eventName) {
       case 'escrow_funded': {
         const record = await deps.contractReader.getEscrow(chainDeliveryId);
-        await deps.escrowRepository.create(record);
+        const isVerified = deps.allowedTokens ? deps.allowedTokens.includes(record.token) : true;
+        if (!isVerified) {
+          deps.logger?.warn(
+            { chainDeliveryId: chainDeliveryId.toString(), token: record.token },
+            `Unrecognized payment token "${record.token}" in escrow_funded event; flagging escrow as unverified`,
+          );
+        }
+        await deps.escrowRepository.create({
+          ...record,
+          isVerified,
+        });
         return;
       }
 

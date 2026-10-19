@@ -74,6 +74,15 @@ const baseEnvSchema = z.object({
   DISPUTE_RESOLUTION_CONTRACT_ID: z.string().optional(),
   FLEET_MANAGEMENT_CONTRACT_ID: z.string().optional(),
   IDENTITY_REPUTATION_CONTRACT_ID: z.string().optional(),
+  ALLOWED_PAYMENT_TOKENS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((token) => token.trim())
+        .filter((token) => token.length > 0),
+    ),
 
   INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5_000),
   INDEXER_LAG_ALERT_LEDGERS: z.coerce.number().int().positive().default(50),
