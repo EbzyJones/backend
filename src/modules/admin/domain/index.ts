@@ -9,6 +9,7 @@ export type {
   AdminTransactionScope,
   AdminUnitOfWork,
   AuditLogRepository,
+  AuthCacheInvalidator,
   DisputeReviewReader,
   ListAuditLogFilter,
   RecordAuditLogInput,
