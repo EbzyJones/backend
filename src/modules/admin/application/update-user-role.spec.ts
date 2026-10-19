@@ -6,6 +6,7 @@ import {
   createInMemoryAdminUnitOfWork,
   createInMemoryAuditLogRepository,
   createInMemoryUserRoleRepository,
+  createFakeAuthCacheInvalidator,
   createFakeSessionRevoker,
 } from './__fixtures__/fakes.js';
 
@@ -13,13 +14,20 @@ function setup() {
   const userRoleRepository = createInMemoryUserRoleRepository();
   const auditLogRepository = createInMemoryAuditLogRepository();
   const sessionRevoker = createFakeSessionRevoker();
+  const authCacheInvalidator = createFakeAuthCacheInvalidator();
   const unitOfWork = createInMemoryAdminUnitOfWork({
     userRoleRepository,
     auditLogRepository,
     sessionRevoker,
   });
-  const updateUserRole = createUpdateUserRoleUseCase({ unitOfWork });
-  return { userRoleRepository, auditLogRepository, sessionRevoker, updateUserRole };
+  const updateUserRole = createUpdateUserRoleUseCase({ unitOfWork, authCacheInvalidator });
+  return {
+    userRoleRepository,
+    auditLogRepository,
+    sessionRevoker,
+    authCacheInvalidator,
+    updateUserRole,
+  };
 }
 
 describe('updateUserRole', () => {
@@ -89,7 +97,8 @@ describe('updateUserRole', () => {
   // insert must commit or roll back as one unit — a crash (or a failing
   // audit insert) must never leave a privilege change with no audit record.
   it('rolls back the role change and session revocation when the audit log write fails', async () => {
-    const { userRoleRepository, auditLogRepository, sessionRevoker } = setup();
+    const { userRoleRepository, auditLogRepository, sessionRevoker, authCacheInvalidator } =
+      setup();
     userRoleRepository.seed(buildAdminUser({ id: 'target-1', role: 'CUSTOMER' }));
     userRoleRepository.seed(
       buildAdminUser({ id: 'admin-1', email: 'admin@example.com', role: 'ADMIN' }),
@@ -105,6 +114,7 @@ describe('updateUserRole', () => {
         },
         sessionRevoker,
       }),
+      authCacheInvalidator,
     });
 
     await expect(
@@ -113,5 +123,49 @@ describe('updateUserRole', () => {
 
     expect((await userRoleRepository.findById('target-1'))?.role).toBe('CUSTOMER');
     expect(sessionRevoker.wasCalledFor('target-1')).toBe(false);
+  });
+
+  // Issue #369: `authenticate` serves `{ role, tokenVersion }` from a
+  // short-TTL Redis cache. The eviction is what keeps security issue #12's
+  // "takes effect on the very next request" guarantee intact despite that
+  // cache — so it must happen after a *successful* change, and must not
+  // happen when the unit of work rolled back (nothing changed to evict).
+  it('evicts the auth guard cache for the target user after a committed role change', async () => {
+    const { userRoleRepository, authCacheInvalidator, updateUserRole } = setup();
+    userRoleRepository.seed(buildAdminUser({ id: 'target-1', role: 'CUSTOMER' }));
+    userRoleRepository.seed(
+      buildAdminUser({ id: 'admin-1', email: 'admin@example.com', role: 'ADMIN' }),
+    );
+
+    await updateUserRole({ actorId: 'admin-1', userId: 'target-1', role: 'COURIER' });
+
+    expect(authCacheInvalidator.allInvalidated()).toEqual(['target-1']);
+  });
+
+  it('does not evict the auth guard cache when the role change rolls back', async () => {
+    const { userRoleRepository, authCacheInvalidator } = setup();
+    userRoleRepository.seed(buildAdminUser({ id: 'target-1', role: 'CUSTOMER' }));
+    userRoleRepository.seed(
+      buildAdminUser({ id: 'admin-1', email: 'admin@example.com', role: 'ADMIN' }),
+    );
+    const updateUserRole = createUpdateUserRoleUseCase({
+      unitOfWork: createInMemoryAdminUnitOfWork({
+        userRoleRepository,
+        auditLogRepository: {
+          ...createInMemoryAuditLogRepository(),
+          record: async () => {
+            throw new Error('audit log insert failed');
+          },
+        },
+        sessionRevoker: createFakeSessionRevoker(),
+      }),
+      authCacheInvalidator,
+    });
+
+    await expect(
+      updateUserRole({ actorId: 'admin-1', userId: 'target-1', role: 'COURIER' }),
+    ).rejects.toThrow('audit log insert failed');
+
+    expect(authCacheInvalidator.allInvalidated()).toEqual([]);
   });
 });

@@ -4,4 +4,5 @@ export {
   httpRequestsTotal,
   indexerLagLedgers,
   queueJobsGauge,
+  workerHeartbeatFailuresTotal,
 } from './registry.js';

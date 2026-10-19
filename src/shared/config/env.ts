@@ -123,6 +123,16 @@ const baseEnvSchema = z.object({
    * each admin dashboard refresh would otherwise re-run full-table
    * count/groupBy queries on every request. */
   ANALYTICS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(30),
+
+  /** Short-TTL cache for the shared HTTP auth guard's per-user
+   * `{ role, tokenVersion }` row (#369, src/shared/cache/auth-context-
+   * cache.ts) — the guard's security-issue-#12 check would otherwise issue
+   * one `users` lookup per authenticated request. The TTL is only a
+   * backstop: role changes evict the entry the moment they commit
+   * (`AuthCacheInvalidator`, wired via src/modules/admin), so this bounds
+   * staleness only for cache-eviction failures or a future write path that
+   * forgets to evict. */
+  AUTH_CONTEXT_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
 });
 
 /**
