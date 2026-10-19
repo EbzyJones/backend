@@ -129,13 +129,29 @@ function mapDeliveryStatus(value: unknown): DeliveryStatus {
   return mapped;
 }
 
-function u64StringToDate(value: unknown): Date {
+/**
+ * Converts a u64-as-string unix-seconds value to a `Date`. Never returns an
+ * Invalid Date: a non-numeric or out-of-range value throws a descriptive
+ * decode error instead, so `.toISOString()` serialization downstream
+ * (e.g. `GET /deliveries/:id`) cannot raise `RangeError: Invalid time value`
+ * and take the whole endpoint down (#293, #380).
+ *
+ * When the on-chain timestamp is corrupt and an `eventClosedAt` (the
+ * indexer's ledger-close time for the event carrying this record) is
+ * provided and itself valid, it is used as a safe fallback rather than
+ * failing the decode.
+ */
+function u64StringToDate(value: unknown, eventClosedAt?: Date | null): Date {
   if (typeof value !== 'string') throw new Error('Expected a u64-as-string value');
-  return new Date(Number(value) * 1000);
+  const timestamp = new Date(Number(value) * 1000);
+  if (!Number.isNaN(timestamp.getTime())) return timestamp;
+  if (eventClosedAt && !Number.isNaN(eventClosedAt.getTime())) return eventClosedAt;
+  throw new Error(`Invalid u64-as-string timestamp: "${value}"`);
 }
 
-function optionalU64StringToDate(value: unknown): Date | null {
-  return value === null || value === undefined ? null : u64StringToDate(value);
+function optionalU64StringToDate(value: unknown, eventClosedAt?: Date | null): Date | null {
+  if (value === null || value === undefined) return null;
+  return u64StringToDate(value, eventClosedAt);
 }
 
 function requireString(value: unknown, field: string): string {
@@ -168,7 +184,16 @@ function requireRecord(value: unknown, field: string): Record<string, unknown> {
  * changed, either of which should surface loudly, not as bad data quietly
  * written to the read model.
  */
-export function nativeToChainDeliveryRecord(native: unknown): ChainDeliveryRecord {
+/**
+ * @param eventClosedAt the indexer's ledger-close time for the event that
+ * carried this record — used as a safe fallback when an on-chain timestamp
+ * field is corrupt, so a single bad `created_at` cannot fail the whole
+ * decode or later produce an Invalid Date.
+ */
+export function nativeToChainDeliveryRecord(
+  native: unknown,
+  eventClosedAt?: Date | null,
+): ChainDeliveryRecord {
   const record = requireRecord(native, 'DeliveryRecord');
   const metadata = requireRecord(record.metadata, 'metadata');
   const cargo = requireRecord(metadata.cargo_description, 'cargo_description');
@@ -187,8 +212,8 @@ export function nativeToChainDeliveryRecord(native: unknown): ChainDeliveryRecor
     cargoCategory: mapCargoCategory(cargo.category),
     weightGrams: requireNumber(cargo.weight_grams, 'cargo_description.weight_grams'),
     fragile: requireBoolean(cargo.fragile, 'cargo_description.fragile'),
-    createdAtChain: u64StringToDate(record.created_at),
-    transitStartedAt: optionalU64StringToDate(record.transit_started_at),
-    deliveredAt: optionalU64StringToDate(record.delivered_at),
+    createdAtChain: u64StringToDate(record.created_at, eventClosedAt),
+    transitStartedAt: optionalU64StringToDate(record.transit_started_at, eventClosedAt),
+    deliveredAt: optionalU64StringToDate(record.delivered_at, eventClosedAt),
   };
 }

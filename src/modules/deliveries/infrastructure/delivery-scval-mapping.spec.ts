@@ -177,4 +177,68 @@ describe('nativeToChainDeliveryRecord', () => {
   it('throws on a structurally invalid record rather than returning partial data', () => {
     expect(() => nativeToChainDeliveryRecord({ not: 'a delivery record' })).toThrow();
   });
+
+  it('falls back to event.closedAt when created_at is an invalid timestamp', () => {
+    const sender = Keypair.random().publicKey();
+    const recipient = Keypair.random().publicKey();
+    const eventClosedAt = new Date('2026-01-02T00:00:00Z');
+    const scVal = namedStructToScVal({
+      delivery_id: tupleStructToScVal(u64ToScVal(7n)),
+      sender: addressToScVal(sender),
+      recipient: addressToScVal(recipient),
+      driver: xdr.ScVal.scvVoid(),
+      status: unitEnumToScVal('Pending'),
+      metadata: namedStructToScVal({
+        delivery_id: u64ToScVal(0n),
+        origin: stringToScVal('Nairobi'),
+        destination: stringToScVal('Kampala'),
+        cargo_description: namedStructToScVal({
+          weight_grams: u32ToScVal(300),
+          category: unitEnumToScVal('Documents'),
+          fragile: boolToScVal(false),
+        }),
+        created_at: stringToScVal('invalid'),
+        estimated_delivery: u64ToScVal(1_700_000_000n),
+      }),
+      created_at: stringToScVal('invalid'),
+      delivered_at: xdr.ScVal.scvVoid(),
+      transit_started_at: xdr.ScVal.scvVoid(),
+    });
+
+    const record = nativeToChainDeliveryRecord(scValToNative(scVal), eventClosedAt);
+
+    expect(record.createdAtChain).toEqual(eventClosedAt);
+    expect(record.createdAtChain.toISOString()).toBe(eventClosedAt.toISOString());
+  });
+
+  it('throws a descriptive decode error when created_at is invalid and no fallback is given', () => {
+    const sender = Keypair.random().publicKey();
+    const recipient = Keypair.random().publicKey();
+    const scVal = namedStructToScVal({
+      delivery_id: tupleStructToScVal(u64ToScVal(7n)),
+      sender: addressToScVal(sender),
+      recipient: addressToScVal(recipient),
+      driver: xdr.ScVal.scvVoid(),
+      status: unitEnumToScVal('Pending'),
+      metadata: namedStructToScVal({
+        delivery_id: u64ToScVal(0n),
+        origin: stringToScVal('Nairobi'),
+        destination: stringToScVal('Kampala'),
+        cargo_description: namedStructToScVal({
+          weight_grams: u32ToScVal(300),
+          category: unitEnumToScVal('Documents'),
+          fragile: boolToScVal(false),
+        }),
+        created_at: stringToScVal('invalid'),
+        estimated_delivery: u64ToScVal(1_700_000_000n),
+      }),
+      created_at: stringToScVal('invalid'),
+      delivered_at: xdr.ScVal.scvVoid(),
+      transit_started_at: xdr.ScVal.scvVoid(),
+    });
+
+    expect(() => nativeToChainDeliveryRecord(scValToNative(scVal))).toThrow(
+      /Invalid u64-as-string timestamp/,
+    );
+  });
 });

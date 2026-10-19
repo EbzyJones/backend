@@ -1,3 +1,4 @@
+import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { authenticate, ok } from '../../../shared/http/index.js';
 import { serializeDelivery } from '../domain/index.js';
@@ -85,6 +86,7 @@ export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPlu
         schema: { body: assignDriverBodySchema, response: { 200: transactionResponseSchema } },
       },
       async (request, reply) => {
+        await ensureCallerOwnedByUser(config, request);
         const xdrEnvelope = await useCases.buildTransactions.buildAssignDriverTransaction({
           ...request.body,
           chainDeliveryId: BigInt(request.body.chainDeliveryId),
@@ -161,6 +163,7 @@ export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPlu
         schema: { body: raiseDisputeBodySchema, response: { 200: transactionResponseSchema } },
       },
       async (request, reply) => {
+        await ensureCallerOwnedByUser(config, request);
         const xdrEnvelope = await useCases.buildTransactions.buildRaiseDisputeTransaction({
           ...request.body,
           chainDeliveryId: BigInt(request.body.chainDeliveryId),
