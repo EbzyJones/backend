@@ -30,7 +30,18 @@ const allowedEvidenceContentType = z.enum(allowedEvidenceContentTypes);
  * memory or overflow the evidence storage column before the decoded-size
  * check ever runs.
  */
-const MAX_BASE64_CONTENT_LENGTH = 14 * 1024 * 1024;
+export const MAX_BASE64_CONTENT_LENGTH = 14 * 1024 * 1024;
+
+/**
+ * Transport-level body limit for the evidence upload route. The JSON body
+ * wraps the base64 string in an envelope (uploadedBy, contentType, JSON
+ * quoting/escaping), so the raw request body is slightly larger than the
+ * base64 string itself. This leaves headroom above
+ * MAX_BASE64_CONTENT_LENGTH so that a payload within the schema limit is not
+ * rejected by Fastify, while anything larger is refused with HTTP 413 before
+ * the full JSON body is buffered into memory.
+ */
+export const EVIDENCE_UPLOAD_BODY_LIMIT = 15 * 1024 * 1024;
 
 const evidenceDto = z.object({
   id: z.string().uuid(),
