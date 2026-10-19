@@ -9,12 +9,18 @@ export interface EscrowStatusPatch {
   refundedAt?: Date;
 }
 
+export type EscrowSecondaryOperation = (tx: unknown) => Promise<void>;
+
 /** The read model — written exclusively by `syncEscrowFromEvent` reacting to
  * confirmed on-chain events, same rule as every other module's repository. */
 export interface EscrowRepository {
   findByChainDeliveryId(chainDeliveryId: bigint): Promise<Escrow | null>;
   create(record: ChainEscrowRecord): Promise<Escrow>;
-  updateStatus(chainDeliveryId: bigint, patch: EscrowStatusPatch): Promise<void>;
+  updateStatus(
+    chainDeliveryId: bigint,
+    patch: EscrowStatusPatch,
+    secondaryOperation?: EscrowSecondaryOperation,
+  ): Promise<void>;
 }
 
 /**
