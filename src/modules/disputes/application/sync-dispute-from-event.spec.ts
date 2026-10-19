@@ -5,6 +5,7 @@ import {
   buildDispute,
   buildDisputeResolutionEvent,
   buildEscrowDisputeEvent,
+  createFakeDisputeEscrowStateReader,
   createFakeWalletOwnershipRepository,
   createInMemoryDisputeRepository,
 } from './__fixtures__/fakes.js';
@@ -12,17 +13,24 @@ import {
 function setup() {
   const disputeRepository = createInMemoryDisputeRepository();
   const walletOwnershipRepository = createFakeWalletOwnershipRepository();
-  // `escrowStateReader` is still not provided here (pre-existing, unrelated
-  // to B2.1 — see the "escrow dispute_resolved is intentionally not
-  // handled" test below, which already fails against this same gap).
-  // `walletOwnershipRepository` is now required too (B2.1) — every test in
-  // this file that reaches `dispute_raised`/`delivery_disputed` needs it,
-  // not just the new ones added for this fix.
+  // `escrowStateReader` is the supplementary `get_escrow` read
+  // `handleEscrowOnlyResolution` uses to disambiguate the otherwise
+  // ambiguous `escrow.dispute_resolved` event (see sync-dispute-from-event.ts's
+  // header comment). Seeded per-test below; an unseeded id throws, so a test
+  // that reaches that fallback without declaring its expected escrow state
+  // fails loudly rather than silently passing on `undefined` (#336).
+  const escrowStateReader = createFakeDisputeEscrowStateReader();
   const syncDisputeFromEvent = createSyncDisputeFromEventUseCase({
     disputeRepository,
+    escrowStateReader,
     walletOwnershipRepository,
   });
-  return { disputeRepository, walletOwnershipRepository, syncDisputeFromEvent };
+  return {
+    disputeRepository,
+    escrowStateReader,
+    walletOwnershipRepository,
+    syncDisputeFromEvent,
+  };
 }
 
 describe('syncDisputeFromEvent', () => {
@@ -150,9 +158,10 @@ describe('syncDisputeFromEvent', () => {
     });
   });
 
-  it('escrow dispute_resolved is intentionally not handled — ambiguous outcome, no fallback read here', async () => {
-    const { disputeRepository, syncDisputeFromEvent } = setup();
+  it('escrow dispute_resolved: leaves an OPEN dispute OPEN when the escrow has not settled (LOCKED)', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
     disputeRepository.seed(buildDispute({ chainDeliveryId: 1n, status: 'OPEN' }));
+    escrowStateReader.seed(1n, 'LOCKED');
 
     await syncDisputeFromEvent(
       buildEscrowDisputeEvent({
@@ -162,6 +171,76 @@ describe('syncDisputeFromEvent', () => {
     );
 
     expect((await disputeRepository.findByChainDeliveryId(1n))?.status).toBe('OPEN');
+  });
+
+  it('escrow dispute_resolved: resolves an OPEN dispute to RESOLVED_PAYOUT when the escrow was released', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
+    disputeRepository.seed(
+      buildDispute({ chainDeliveryId: 1n, status: 'OPEN', raisedBy: 'GDISPUTER' }),
+    );
+    escrowStateReader.seed(1n, 'RELEASED');
+    const resolvedAt = new Date('2026-02-02T00:00:00Z');
+
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: ['GADMIN', 'GADMIN'],
+        closedAt: resolvedAt,
+      }),
+    );
+
+    const stored = await disputeRepository.findByChainDeliveryId(1n);
+    expect(stored).toMatchObject({
+      status: 'RESOLVED_PAYOUT',
+      raisedBy: 'GDISPUTER',
+      resolvedAt,
+    });
+  });
+
+  it('escrow dispute_resolved: resolves an OPEN dispute to RESOLVED_REFUND when the escrow was refunded', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
+    disputeRepository.seed(buildDispute({ chainDeliveryId: 1n, status: 'OPEN' }));
+    escrowStateReader.seed(1n, 'REFUNDED');
+    const resolvedAt = new Date('2026-02-03T00:00:00Z');
+
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({
+        topic: ['dispute_resolved', '1'],
+        payload: ['GADMIN', 'GADMIN'],
+        closedAt: resolvedAt,
+      }),
+    );
+
+    const stored = await disputeRepository.findByChainDeliveryId(1n);
+    expect(stored).toMatchObject({ status: 'RESOLVED_REFUND', resolvedAt });
+  });
+
+  it('escrow dispute_resolved: never overwrites an already-recorded resolution — a prior Layer B outcome stays authoritative', async () => {
+    const { disputeRepository, escrowStateReader, syncDisputeFromEvent } = setup();
+    // Already resolved via Layer B; the escrow now reads RELEASED, which a
+    // naive re-derivation would flip to RESOLVED_PAYOUT.
+    disputeRepository.seed(
+      buildDispute({ chainDeliveryId: 1n, status: 'RESOLVED_REFUND', raisedBy: 'GDISPUTER' }),
+    );
+    escrowStateReader.seed(1n, 'RELEASED');
+
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({ topic: ['dispute_resolved', '1'], payload: ['GADMIN', 'GADMIN'] }),
+    );
+
+    expect((await disputeRepository.findByChainDeliveryId(1n))?.status).toBe('RESOLVED_REFUND');
+  });
+
+  it('escrow dispute_resolved: skips when no dispute was ever raised (out-of-order event), without consulting the escrow reader', async () => {
+    const { disputeRepository, syncDisputeFromEvent } = setup();
+    // Deliberately no `escrowStateReader.seed` for this id: the no-prior-raise
+    // guard must return before the supplementary read, so consulting the
+    // (unseeded, therefore throwing) fake would fail this test.
+    await syncDisputeFromEvent(
+      buildEscrowDisputeEvent({ topic: ['dispute_resolved', '1'], payload: ['GADMIN', 'GADMIN'] }),
+    );
+
+    expect(await disputeRepository.findByChainDeliveryId(1n)).toBeNull();
   });
 
   it('dispute_resolved_split: records senderShareBps from the event payload (issue #40)', async () => {

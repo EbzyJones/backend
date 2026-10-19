@@ -4,6 +4,7 @@ import { logger } from '../logger/index.js';
 import type { Logger } from '../logger/index.js';
 
 export { parseAddress, parseBigIntId } from './parse.js';
+export { ContractName } from './contract-names.js';
 
 /**
  * Every durably-stored blockchain event, after decoding, in one shape —
