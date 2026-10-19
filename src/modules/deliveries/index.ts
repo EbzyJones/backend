@@ -16,6 +16,7 @@ import {
 } from './infrastructure/index.js';
 import { createDeliveriesRoutes } from './interface/routes.js';
 import type { DeliveryContractReader, DeliveryTransactionBuilder } from './domain/index.js';
+import { createPrismaWalletAddressRepository } from '../users/infrastructure/index.js';
 
 /** Every method throws a clear, actionable error instead of the module
  * failing to boot — consistent with the indexer's "skip if not configured"
@@ -59,5 +60,10 @@ export function createDeliveriesModule(prisma: PrismaClient): FastifyPluginAsync
     }),
   };
 
-  return createDeliveriesRoutes(useCases);
+  // `wallet_addresses` is the shared wallet-linking table owned by `users`;
+  // reading it here for caller-address ownership is the same deliberate
+  // cross-module read precedent `disputes` and `notifications` already set.
+  return createDeliveriesRoutes(useCases, {
+    walletAddressRepository: createPrismaWalletAddressRepository(prisma),
+  });
 }

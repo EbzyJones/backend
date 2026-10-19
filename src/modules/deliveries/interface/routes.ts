@@ -1,6 +1,9 @@
+import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import { authenticate, ok } from '../../../shared/http/index.js';
+import { authenticate, ok, requireUser } from '../../../shared/http/index.js';
+import { ForbiddenError } from '../../../shared/errors/app-error.js';
 import type { Delivery } from '../domain/index.js';
+import type { WalletAddressRepository } from '../../users/domain/index.js';
 import type {
   createBuildDeliveryTransactionsUseCases,
   createGetDeliveryUseCase,
@@ -26,6 +29,36 @@ export interface DeliveriesUseCases {
   buildTransactions: ReturnType<typeof createBuildDeliveryTransactionsUseCases>;
 }
 
+/**
+ * Route-level dependencies that are not use cases — here the wallet-ownership
+ * read used to authorize transaction building against the shared
+ * `wallet_addresses` table (same deliberate cross-module read precedent as
+ * `disputes` and `notifications`; the address→user link lives in `users`).
+ */
+export interface DeliveriesRoutesConfig {
+  walletAddressRepository: WalletAddressRepository;
+}
+
+/**
+ * Ensures `callerAddress` belongs to the authenticated user before any
+ * delivery transaction envelope is built for it, so a user can only build
+ * transactions sourced from wallets linked to their own account
+ * (#381). Throws `ForbiddenError` (HTTP 403) otherwise.
+ */
+async function ensureCallerOwnedByUser(
+  config: DeliveriesRoutesConfig,
+  request: FastifyRequest,
+): Promise<void> {
+  const user = requireUser(request);
+  const { callerAddress } = request.body as { callerAddress?: string };
+  const wallet = callerAddress
+    ? await config.walletAddressRepository.findByAddress(callerAddress)
+    : null;
+  if (!wallet || wallet.userId !== user.id) {
+    throw new ForbiddenError('Caller address is not linked to your account');
+  }
+}
+
 function serializeDelivery(delivery: Delivery) {
   return {
     id: delivery.id,
@@ -45,7 +78,10 @@ function serializeDelivery(delivery: Delivery) {
   };
 }
 
-export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPluginAsyncZod {
+export function createDeliveriesRoutes(
+  useCases: DeliveriesUseCases,
+  config: DeliveriesRoutesConfig,
+): FastifyPluginAsyncZod {
   return async function deliveriesRoutes(app) {
     app.get(
       '/deliveries',
@@ -104,6 +140,7 @@ export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPlu
         schema: { body: assignDriverBodySchema, response: { 200: transactionResponseSchema } },
       },
       async (request, reply) => {
+        await ensureCallerOwnedByUser(config, request);
         const xdrEnvelope = await useCases.buildTransactions.buildAssignDriverTransaction({
           ...request.body,
           chainDeliveryId: BigInt(request.body.chainDeliveryId),
@@ -180,6 +217,7 @@ export function createDeliveriesRoutes(useCases: DeliveriesUseCases): FastifyPlu
         schema: { body: raiseDisputeBodySchema, response: { 200: transactionResponseSchema } },
       },
       async (request, reply) => {
+        await ensureCallerOwnedByUser(config, request);
         const xdrEnvelope = await useCases.buildTransactions.buildRaiseDisputeTransaction({
           ...request.body,
           chainDeliveryId: BigInt(request.body.chainDeliveryId),

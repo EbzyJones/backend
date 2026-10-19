@@ -58,7 +58,7 @@ export const createDeliveryBodySchema = z.object({
   origin: z.string().min(1).max(256),
   destination: z.string().min(1).max(256),
   cargoCategory,
-  weightGrams: z.number().int().positive(),
+  weightGrams: z.number().int().positive().max(500_000, 'Weight cannot exceed 500kg (500,000g)'),
   fragile: z.boolean(),
   estimatedDelivery: z.string().datetime(),
 });

@@ -45,7 +45,7 @@ describe.skipIf(!dbAvailable)('deliveries routes (integration)', () => {
    * database (security issue #12's `tokenVersion` check), so a token for a
    * user that was never actually created is correctly rejected as
    * unauthorized before ever reaching a route handler. */
-  async function registerUser(): Promise<{ accessToken: string }> {
+  async function registerUser(): Promise<{ accessToken: string; userId: string }> {
     const email = `delivery-test-${randomUUID()}@example.com`;
     createdEmails.push(email);
     await app.inject({
@@ -58,7 +58,22 @@ describe.skipIf(!dbAvailable)('deliveries routes (integration)', () => {
       url: '/api/v1/auth/login',
       payload: { email, password: 'password123' },
     });
-    return { accessToken: login.json<SuccessBody<{ accessToken: string }>>().data.accessToken };
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    return {
+      accessToken: login.json<SuccessBody<{ accessToken: string }>>().data.accessToken,
+      userId: user.id,
+    };
+  }
+
+  /** Registers a real account and links a fresh Stellar wallet to it directly
+   * via Prisma (wallet linking itself is covered by `users`' own tests). */
+  async function registerWithWallet(): Promise<{ accessToken: string; address: string }> {
+    const { accessToken, userId } = await registerUser();
+    const address = Keypair.random().publicKey();
+    await prisma.walletAddress.create({
+      data: { userId, address, isPrimary: true, verifiedAt: new Date() },
+    });
+    return { accessToken, address };
   }
 
   function nextChainId(): bigint {
@@ -177,6 +192,64 @@ describe.skipIf(!dbAvailable)('deliveries routes (integration)', () => {
     });
 
     expect(response.statusCode).toBe(401);
+  });
+
+  it('rejects assign-driver with a caller address not linked to the caller', async () => {
+    const { accessToken } = await registerUser();
+    const unlinkedAddress = Keypair.random().publicKey();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/transactions/build/assign-driver',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        callerAddress: unlinkedAddress,
+        chainDeliveryId: '1',
+        driverAddress: Keypair.random().publicKey(),
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<ErrorBody>().error.code).toBe('FORBIDDEN');
+  });
+
+  it('rejects raise-delivery-dispute with a caller address not linked to the caller', async () => {
+    const { accessToken } = await registerUser();
+    const unlinkedAddress = Keypair.random().publicKey();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/transactions/build/raise-delivery-dispute',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { callerAddress: unlinkedAddress, chainDeliveryId: '1' },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<ErrorBody>().error.code).toBe('FORBIDDEN');
+  });
+
+  it('does not reject assign-driver when the caller address is linked to the caller', async () => {
+    const { accessToken, address } = await registerWithWallet();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/transactions/build/assign-driver',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        callerAddress: address,
+        chainDeliveryId: '1',
+        driverAddress: Keypair.random().publicKey(),
+      },
+    });
+
+    // Ownership passed (not 403); with DELIVERY_CONTRACT_ID unconfigured the
+    // builder returns 502 BLOCKCHAIN_ERROR, or 200 with XDR when configured.
+    expect([200, 502]).toContain(response.statusCode);
+    if (response.statusCode === 502) {
+      const body = response.json<ErrorBody>();
+      expect(body.error.code).toBe('BLOCKCHAIN_ERROR');
+      expect(body.error.message).toContain('DELIVERY_CONTRACT_ID');
+    }
   });
 
   // Regression coverage for the raise-dispute/raise-delivery-dispute route
