@@ -88,6 +88,37 @@ export function createPrismaFleetRepository(prisma: PrismaClient): FleetReposito
       return toFleetWithDrivers(record, totalActiveDrivers);
     },
 
+    async listFleetsByOwner(ownerAddress, options) {
+      const limit = options?.limit ?? 20;
+      const offset = options?.offset ?? 0;
+
+      const records = await prisma.fleet.findMany({
+        where: { ownerAddress },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+        include: {
+          drivers: {
+            where: { removedAt: null },
+            take: 100,
+            orderBy: { invitedAt: 'desc' },
+          },
+        },
+      });
+
+      // Active driver counts are computed per fleet from the full, unfiltered
+      // membership so they stay correct regardless of the bounded `drivers`
+      // include above.
+      return Promise.all(
+        records.map(async (record) => {
+          const totalActiveDrivers = await prisma.fleetDriver.count({
+            where: { fleetId: record.id, status: 'ACTIVE', removedAt: null },
+          });
+          return toFleetWithDrivers(record, totalActiveDrivers);
+        }),
+      );
+    },
+
     async create(record) {
       // `upsert`, not `create`: a replayed/redelivered `fleet_registered`
       // for a fleet this repository already indexed must not throw P2002 —

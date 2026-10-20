@@ -18,11 +18,26 @@ export interface FindFleetOptions {
   driverLimit?: number;
 }
 
+export interface PaginationOptions {
+  /** 1-based page number. Defaults to 1. */
+  page?: number;
+  /** Page size. Defaults to 20. */
+  limit?: number;
+}
+
 export interface FleetRepository {
   findByChainFleetId(
     chainFleetId: bigint,
     options?: FindFleetOptions,
   ): Promise<FleetWithDrivers | null>;
+  /** Lists every fleet whose `ownerAddress` matches one of the given
+   * addresses, newest first, paginated. Used by `GET /fleets` so a fleet
+   * manager can discover the fleets they own without knowing every
+   * `chainFleetId` out-of-band. */
+  listFleetsByOwner(
+    ownerAddress: string,
+    options?: PaginationOptions,
+  ): Promise<Fleet[]>;
   create(record: ChainFleetRecord): Promise<Fleet>;
   updateTreasury(chainFleetId: bigint, treasuryAddress: string): Promise<void>;
   inviteDriver(chainFleetId: bigint, driverAddress: string, invitedAt: Date): Promise<void>;
