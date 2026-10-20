@@ -18,7 +18,22 @@ export interface AssessActorDeps {
    * the `occurredAt` values they're compared against, immune to indexer lag.
    */
   clock?: Clock;
+  /**
+   * Optional alert publisher invoked whenever an assessment flags an actor.
+   * Receives the full {@link ActorAssessment} (address + per-rule signals) so
+   * the consumer can dispatch an admin security notification or alert
+   * webhook with the triggered signals. Omitted in tests/callers that don't
+   * care about alerting; the verdict is unaffected either way.
+   */
+  alertPublisher?: ActorFlaggedAlertPublisher;
 }
+
+/**
+ * Publishes an `actor_flagged` alert for a flagged {@link ActorAssessment}.
+ * Implementations should be resilient (e.g. swallow/log transport errors) so
+ * a failing alert channel never breaks fraud assessment itself.
+ */
+export type ActorFlaggedAlertPublisher = (assessment: ActorAssessment) => Promise<void>;
 
 export interface AssessActorInput {
   address: string;
@@ -71,6 +86,11 @@ const RULES: RuleDefinition[] = [
  * persisted — every call re-evaluates from scratch, so a verdict can never go
  * stale (same rationale as `record-actor-activity-from-event.ts`).
  *
+ * When the verdict flags the actor and `deps.alertPublisher` is configured,
+ * an `actor_flagged` alert is published with the full assessment (address and
+ * per-rule signals) so operators are notified in real time instead of having
+ * to poll for flagged actors.
+ *
  * Counts are capped at `threshold + 1` (passed as `countSince`'s `limit`):
  * once that many rows are observed the rule is guaranteed to trigger, so the
  * repository can short-circuit instead of counting every excess row for
@@ -82,6 +102,8 @@ const RULES: RuleDefinition[] = [
  *     per rule via `countSince(address, category, since, limit)`.
  *   - `clock` (optional): time base for the rule windows; defaults to
  *     `systemClock` when omitted.
+ *   - `alertPublisher` (optional): invoked with the assessment when the actor
+ *     is flagged, to dispatch an `actor_flagged` admin/security alert.
  * @returns An async `assessActor` function that takes an {@link AssessActorInput}
  *   (`{ address }`) and resolves to an {@link ActorAssessment} containing the
  *   assessed `address`, a `flagged` boolean, and the per-rule `signals`
@@ -113,10 +135,16 @@ export function createAssessActorUseCase(deps: AssessActorDeps) {
       }),
     );
 
-    return {
+    const assessment: ActorAssessment = {
       address: input.address,
       flagged: signals.some((signal) => signal.triggered),
       signals,
     };
+
+    if (assessment.flagged && deps.alertPublisher) {
+      await deps.alertPublisher(assessment);
+    }
+
+    return assessment;
   };
 }

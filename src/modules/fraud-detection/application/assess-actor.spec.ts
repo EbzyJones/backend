@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createAssessActorUseCase } from './assess-actor.js';
 import { createFixedClock, createInMemoryActorActivityRepository } from './__fixtures__/fakes.js';
 
@@ -54,6 +54,41 @@ describe('assessActor', () => {
     const signal = result.signals.find((s) => s.ruleType === 'DISPUTE_RAISE_VELOCITY');
     expect(signal).toMatchObject({ count: 4, threshold: 3, windowHours: 24, triggered: true });
     expect(result.flagged).toBe(true);
+  });
+
+  describe('alerting', () => {
+    it('dispatches an actor_flagged alert with the triggered signals when an actor is flagged', async () => {
+      const activityRepository = createInMemoryActorActivityRepository();
+      for (let i = 0; i < 11; i += 1) {
+        activityRepository.seed('GBOTALERT', 'DELIVERY_CREATED', new Date());
+      }
+      const alertPublisher = { publish: vi.fn().mockResolvedValue(undefined) };
+      const assessActor = createAssessActorUseCase({ activityRepository, alertPublisher });
+
+      const result = await assessActor({ address: 'GBOTALERT' });
+
+      expect(result.flagged).toBe(true);
+      expect(alertPublisher.publish).toHaveBeenCalledTimes(1);
+      const event = alertPublisher.publish.mock.calls[0][0];
+      expect(event).toMatchObject({ type: 'actor_flagged', address: 'GBOTALERT' });
+      expect(event.signals).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ ruleType: 'DELIVERY_CREATION_VELOCITY', triggered: true }),
+        ]),
+      );
+      expect(event.signals.every((s: { triggered: boolean }) => s.triggered)).toBe(true);
+    });
+
+    it('does not dispatch an alert when the actor is not flagged', async () => {
+      const activityRepository = createInMemoryActorActivityRepository();
+      const alertPublisher = { publish: vi.fn().mockResolvedValue(undefined) };
+      const assessActor = createAssessActorUseCase({ activityRepository, alertPublisher });
+
+      const result = await assessActor({ address: 'GCLEAN' });
+
+      expect(result.flagged).toBe(false);
+      expect(alertPublisher.publish).not.toHaveBeenCalled();
+    });
   });
 
   describe('under simulated indexer lag', () => {
