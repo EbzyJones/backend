@@ -6,6 +6,7 @@ import type {
   ResolveDisputeSplitFundsTxInput,
   ResolveDisputeTxInput,
 } from '../domain/index.js';
+import { ValidationError } from '../../../shared/errors/index.js';
 
 export interface BuildDisputeTransactionsDeps {
   transactionBuilder: DisputeTransactionBuilder;
@@ -43,6 +44,14 @@ export function createBuildDisputeTransactionsUseCases(deps: BuildDisputeTransac
     buildResolveDisputeSplitFundsTransaction: async (
       input: ResolveDisputeSplitFundsTxInput,
     ): Promise<string> => {
+      if (
+        !Number.isInteger(input.senderShareBps) ||
+        input.senderShareBps < 0 ||
+        input.senderShareBps > 10_000
+      ) {
+        throw new ValidationError('Sender share must be an integer between 0 and 10000 basis points');
+      }
+
       const xdr = await deps.transactionBuilder.buildResolveDisputeSplitFunds(input);
       await deps.disputeRepository?.recordProposedSenderShareBps(
         input.chainDeliveryId,

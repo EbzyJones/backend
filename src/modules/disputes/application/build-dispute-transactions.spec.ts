@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { ValidationError } from '../../../shared/errors/index.js';
 import { createBuildDisputeTransactionsUseCases } from './build-dispute-transactions.js';
 import {
   buildDispute,
@@ -63,6 +64,33 @@ describe('createBuildDisputeTransactionsUseCases', () => {
     expect(result).toBe('unsigned-xdr:resolve-dispute-split-funds');
     const dispute = await disputeRepository.findByChainDeliveryId(1n);
     expect(dispute?.senderShareBps).toBe(7500);
+  });
+
+  it('buildResolveDisputeSplitFundsTransaction: preserves the 10000-bps split and rejects out-of-range shares', async () => {
+    const transactionBuilder = createFakeDisputeTransactionBuilder();
+    const buildSplitFunds = vi.spyOn(transactionBuilder, 'buildResolveDisputeSplitFunds');
+    const useCases = createBuildDisputeTransactionsUseCases({ transactionBuilder });
+
+    await expect(
+      useCases.buildResolveDisputeSplitFundsTransaction({
+        callerAddress: 'GADMIN',
+        chainDeliveryId: 1n,
+        senderShareBps: 5000,
+      }),
+    ).resolves.toBe('unsigned-xdr:resolve-dispute-split-funds');
+
+    const builtInput = buildSplitFunds.mock.calls[0]?.[0];
+    expect(builtInput?.senderShareBps).toBe(5000);
+    expect(10_000 - (builtInput?.senderShareBps ?? 0)).toBe(5000);
+
+    await expect(
+      useCases.buildResolveDisputeSplitFundsTransaction({
+        callerAddress: 'GADMIN',
+        chainDeliveryId: 2n,
+        senderShareBps: 12_000,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(buildSplitFunds).toHaveBeenCalledTimes(1);
   });
 
   it('buildResolveDisputeSplitFundsTransaction: records the proposed value without touching an existing dispute\'s other fields', async () => {
