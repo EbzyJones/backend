@@ -28,4 +28,11 @@ export interface ActorActivityRepository {
    * comment and `FRAUD_ACTIVITY_RETENTION_DAYS` in `shared/config/env.ts`.
    */
   deleteOlderThan(olderThan: Date, batchSize: number): Promise<number>;
+  /**
+   * Purges every row with `occurredAt` older than `cutoff`, returning the
+   * number of rows deleted. Filters solely on `occurredAt` so the purge can
+   * use the `(occurredAt)` index scan rather than a sequential scan — see
+   * issue #406 on unbounded `actor_activities` growth.
+   */
+  deleteOlderThan(cutoff: Date): Promise<number>;
 }
