@@ -71,9 +71,15 @@ const RULES: RuleDefinition[] = [
  * persisted — every call re-evaluates from scratch, so a verdict can never go
  * stale (same rationale as `record-actor-activity-from-event.ts`).
  *
+ * Counts are capped at `threshold + 1` (passed as `countSince`'s `limit`):
+ * once that many rows are observed the rule is guaranteed to trigger, so the
+ * repository can short-circuit instead of counting every excess row for
+ * high-volume/spam actors. The capped count still satisfies the `>` threshold
+ * comparison, so the verdict is unchanged.
+ *
  * @param deps - Dependencies for the use case:
  *   - `activityRepository`: source of the actor's recorded activity, queried
- *     per rule via `countSince(address, category, since)`.
+ *     per rule via `countSince(address, category, since, limit)`.
  *   - `clock` (optional): time base for the rule windows; defaults to
  *     `systemClock` when omitted.
  * @returns An async `assessActor` function that takes an {@link AssessActorInput}
@@ -90,7 +96,12 @@ export function createAssessActorUseCase(deps: AssessActorDeps) {
     const signals = await Promise.all(
       RULES.map(async (rule) => {
         const since = new Date(now - rule.windowHours * 60 * 60 * 1000);
-        const count = await deps.activityRepository.countSince(input.address, rule.category, since);
+        const count = await deps.activityRepository.countSince(
+          input.address,
+          rule.category,
+          since,
+          rule.threshold + 1,
+        );
         return {
           ruleType: rule.ruleType,
           category: rule.category,
