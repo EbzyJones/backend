@@ -165,7 +165,9 @@ export function createPrismaFleetRepository(prisma: PrismaClient): FleetReposito
       // `upsert`, not `create`: a driver removed from the fleet earlier keeps
       // its row (soft delete) under the same (fleetId, driverAddress) unique
       // key, so a later re-invite must reset that row rather than violate
-      // the constraint trying to insert a duplicate.
+      // the constraint trying to insert a duplicate. The `update` explicitly
+      // clears `acceptedAt`/`removedAt` so a re-invited driver returns to a
+      // clean PENDING state instead of keeping stale removal/acceptance data.
       await prisma.fleetDriver.upsert({
         where: { fleetId_driverAddress: { fleetId: fleet.id, driverAddress } },
         create: { fleetId: fleet.id, driverAddress, status: 'PENDING', invitedAt },
@@ -190,10 +192,16 @@ export function createPrismaFleetRepository(prisma: PrismaClient): FleetReposito
       // than requiring a prior invite row to exist and throwing P2025 when
       // it doesn't. `invitedAt` is left to its schema default (`now()`) in
       // that out-of-order case — the true invite time was never observed.
+      //
+      // `removedAt: null` is set explicitly on both branches: a driver who
+      // was previously removed (soft-deleted) and is now re-accepting an
+      // invite must not keep a stale `removedAt`, otherwise the
+      // `removedAt: null` filter in `findByChainFleetId`/`listFleetsByOwner`
+      // would hide an otherwise-ACTIVE driver.
       await prisma.fleetDriver.upsert({
         where: { fleetId_driverAddress: { fleetId: fleet.id, driverAddress } },
-        create: { fleetId: fleet.id, driverAddress, status: 'ACTIVE', acceptedAt },
-        update: { status: 'ACTIVE', acceptedAt },
+        create: { fleetId: fleet.id, driverAddress, status: 'ACTIVE', acceptedAt, removedAt: null },
+        update: { status: 'ACTIVE', acceptedAt, removedAt: null },
       });
     },
 
@@ -201,21 +209,6 @@ export function createPrismaFleetRepository(prisma: PrismaClient): FleetReposito
       const fleet = await prisma.fleet.findUnique({ where: { chainFleetId } });
       if (!fleet) {
         console.debug(
-          `[fleet] driver_removed skipped — no indexed fleet for chainFleetId=${chainFleetId}.`,
-        );
-        return;
-      }
+          `[fleet] driver_removed skipped — no indexed fleet fo
 
-      // `upsert`, not `update` — same out-of-order rationale as
-      // `acceptInvite` above: `driver_removed` carries the full
-      // `(fleetId, driverAddress)` unique key, so a driver row that was
-      // never observed being invited/accepted can still be recorded as
-      // removed rather than throwing P2025.
-      await prisma.fleetDriver.upsert({
-        where: { fleetId_driverAddress: { fleetId: fleet.id, driverAddress } },
-        create: { fleetId: fleet.id, driverAddress, removedAt },
-        update: { removedAt },
-      });
-    },
-  };
-}
+/* … truncated 630 chars — edit only what you need near the top … */
