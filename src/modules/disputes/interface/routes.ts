@@ -31,6 +31,22 @@ export interface DisputeRoutesConfig {
   evidenceMaxBytes: number;
 }
 
+/** Maps a (safe) content type to the file extension appended to the evidence
+ * download filename so desktop OS viewers can open the file directly (#390).
+ * Unrecognized types fall back to `.bin`. */
+const CONTENT_TYPE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'application/pdf': '.pdf',
+  'audio/mpeg': '.mp3',
+  'video/mp4': '.mp4',
+};
+
+function extensionForContentType(contentType: string): string {
+  return CONTENT_TYPE_EXTENSIONS[contentType] ?? '.bin';
+}
+
 /** `toISOString()` throws `RangeError` on an invalid `Date`, so a single corrupt
  * nullable `resolvedAt` would otherwise turn the whole `getDispute` response
  * into a 500 (#293). An invalid date serializes to `null` (the schema's own
@@ -129,10 +145,14 @@ export function createDisputeRoutes(
         const safeContentType = allowedTypes.includes(contentType)
           ? contentType
           : 'application/octet-stream';
+        const extension = extensionForContentType(safeContentType);
         void reply
           .status(200)
           .type(safeContentType)
-          .header('Content-Disposition', `attachment; filename="${request.params.evidenceId}"`)
+          .header(
+            'Content-Disposition',
+            `attachment; filename="${request.params.evidenceId}${extension}"`,
+          )
           .send(bytes);
       },
     );

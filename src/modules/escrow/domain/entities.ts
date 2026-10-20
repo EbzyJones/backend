@@ -9,6 +9,17 @@ export interface Escrow {
   recipientAddress: string;
   driverAddress: string;
   token: string;
+  /**
+   * Amount in the token's smallest unit, as an exact integer.
+   *
+   * Conversion invariants (see `src/shared/database/decimal.ts`):
+   * - Persisted as Prisma `Decimal(39, 0)`; always a non-negative integer.
+   * - Domain type is `bigint`; never convert through `Number`.
+   * - All Decimal <-> BigInt conversions must use `prismaDecimalToBigInt`
+   *   and `bigIntToPrismaDecimal` (fixed-point string validation).
+   * - Must round-trip exactly up to `i128::MAX`
+   *   (170141183460469231731687303715884105727, 39 digits).
+   */
   amount: bigint;
   /** Only known once an `escrow_released` event has been observed — the
    * on-chain `EscrowRecord` itself doesn't carry this field, see

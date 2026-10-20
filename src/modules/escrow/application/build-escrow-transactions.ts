@@ -1,6 +1,8 @@
 import { ValidationError } from '../../../shared/errors/index.js';
+import { InvalidEscrowStateError } from '../domain/errors.js';
 import type {
   CreateEscrowTxInput,
+  EscrowStatus,
   EscrowTransactionBuilder,
   RefundEscrowTxInput,
   ReleaseEscrowTxInput,
@@ -8,7 +10,15 @@ import type {
 
 export interface BuildEscrowTransactionsDeps {
   transactionBuilder: EscrowTransactionBuilder;
+  /**
+   * Optional read model used to verify escrow state before building a refund
+   * transaction. When provided, refunds are rejected for escrows that are no
+   * longer eligible (e.g. already released or refunded).
+   */
+  getEscrowStatus?: (chainDeliveryId: string) => Promise<EscrowStatus>;
 }
+
+const REFUNDABLE_STATUSES: readonly EscrowStatus[] = ['LOCKED', 'PAUSED'];
 
 /**
  * Creates use cases for building escrow transaction envelopes.
@@ -31,7 +41,14 @@ export function createBuildEscrowTransactionsUseCases(deps: BuildEscrowTransacti
     buildReleaseEscrowTransaction: (input: ReleaseEscrowTxInput): Promise<string> =>
       deps.transactionBuilder.buildReleaseEscrow(input),
 
-    buildRefundEscrowTransaction: (input: RefundEscrowTxInput): Promise<string> =>
-      deps.transactionBuilder.buildRefundEscrow(input),
+    buildRefundEscrowTransaction: async (input: RefundEscrowTxInput): Promise<string> => {
+      if (deps.getEscrowStatus) {
+        const status = await deps.getEscrowStatus(input.chainDeliveryId);
+        if (!REFUNDABLE_STATUSES.includes(status)) {
+          throw new InvalidEscrowStateError('Escrow cannot be refunded in current status');
+        }
+      }
+      return deps.transactionBuilder.buildRefundEscrow(input);
+    },
   };
 }
