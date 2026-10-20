@@ -117,3 +117,6 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](./CODE_OF_
 
 <!-- handsoff-issue-180 -->
 - #180: Missing authentication on POST /transactions/build/assign-driver
+
+<!-- handsoff-issue-402 -->
+- #402: Missing index on FleetDriver.invitedAt causes slow ordering during driver listing
