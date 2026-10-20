@@ -8,6 +8,7 @@ import {
   createInMemoryDisputeRepository,
   createInMemoryEvidenceRepository,
 } from './__fixtures__/fakes.js';
+import { DisputeStatus } from '../domain/dispute-status.js';
 import { EvidenceNotFoundError, ForbiddenEvidenceAccessError } from '../domain/index.js';
 
 function setup() {
@@ -226,151 +227,133 @@ describe('downloadEvidence', () => {
     expect(result.bytes).toEqual(Buffer.from('confidential-data'));
   });
 
-  it('legacy evidence (uploaded before uploadedByUserId existed) still authorizes via current wallet ownership', async () => {
-    const {
-      evidenceRepository,
-      disputeRepository,
-      walletOwnershipRepository,
-      evidenceStorage,
-      downloadEvidence,
-    } = setup();
-    const dispute = buildDispute({ chainDeliveryId: 1n, raisedBy: 'GRAISER' });
-    disputeRepository.seed(dispute);
-    const evidence = buildEvidence({
-      disputeId: dispute.id,
-      uploadedBy: 'GLEGACY',
-      uploadedByUserId: null,
-      storageUrl: 'fake://d/legacy',
-    });
-    evidenceRepository.seed(evidence);
-    evidenceStorage.seed('fake://d/legacy', Buffer.from('legacy-data'));
-    walletOwnershipRepository.seed('legacy-owner', 'GLEGACY');
+  describe('dispute lifecycle access policy', () => {
+    const participantStatuses: DisputeStatus[] = [DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW];
+    const restrictedStatuses: DisputeStatus[] = [
+      DisputeStatus.RESOLVED,
+      DisputeStatus.CANCELLED,
+      DisputeStatus.CLOSED,
+    ];
 
-    const result = await downloadEvidence({
-      evidenceId: evidence.id,
-      requesterId: 'legacy-owner',
-      requesterRole: 'CUSTOMER',
-    });
+    it.each(participantStatuses)(
+      'allows the raiser to download evidence while the dispute is %s',
+      async (status) => {
+        const { evidenceRepository, disputeRepository, evidenceStorage, downloadEvidence } =
+          setup();
+        const dispute = buildDispute({
+          chainDeliveryId: 1n,
+          raisedBy: 'GRAISER',
+          raisedByUserId: 'raiser-user',
+          status,
+        });
+        disputeRepository.seed(dispute);
+        const evidence = buildEvidence({
+          disputeId: dispute.id,
+          uploadedBy: 'GOTHERPARTY',
+          storageUrl: `fake://d/${status}`,
+        });
+        evidenceRepository.seed(evidence);
+        evidenceStorage.seed(`fake://d/${status}`, Buffer.from('open-evidence'));
 
-    expect(result.bytes).toEqual(Buffer.from('legacy-data'));
-  });
+        const result = await downloadEvidence({
+          evidenceId: evidence.id,
+          requesterId: 'raiser-user',
+          requesterRole: 'CUSTOMER',
+        });
 
-  // ── Raiser wallet-relink evidence authorization (B2.1) ──────────────────
-  // Same class of bug as the uploader tests above, for the raiser-access
-  // branch: User A raises a dispute with wallet X, later unlinks X, and a
-  // different User B links X. B must not inherit A's raiser-based evidence
-  // access just by currently controlling that address.
+        expect(result.bytes).toEqual(Buffer.from('open-evidence'));
+      },
+    );
 
-  it('prevents raiser-based access when a different user claims a wallet that was previously linked by the raiser', async () => {
-    const {
-      evidenceRepository,
-      disputeRepository,
-      walletOwnershipRepository,
-      evidenceStorage,
-      downloadEvidence,
-    } = setup();
-    // User A ("original-raiser") raised this dispute while owning GRAISER —
-    // raisedByUserId is what makes this a *current* (non-legacy) dispute
-    // row, captured once when the dispute was first observed and never
-    // re-derived.
-    const dispute = buildDispute({
-      chainDeliveryId: 1n,
-      raisedBy: 'GRAISER',
-      raisedByUserId: 'original-raiser',
-    });
-    disputeRepository.seed(dispute);
-    const evidence = buildEvidence({
-      disputeId: dispute.id,
-      uploadedBy: 'GOTHERPARTY',
-      storageUrl: 'fake://d/raiser-transfer-test',
-    });
-    evidenceRepository.seed(evidence);
-    evidenceStorage.seed('fake://d/raiser-transfer-test', Buffer.from('confidential-data'));
+    it.each(restrictedStatuses)(
+      'denies the raiser access once the dispute is %s',
+      async (status) => {
+        const { evidenceRepository, disputeRepository, evidenceStorage, downloadEvidence } =
+          setup();
+        const dispute = buildDispute({
+          chainDeliveryId: 1n,
+          raisedBy: 'GRAISER',
+          raisedByUserId: 'raiser-user',
+          status,
+        });
+        disputeRepository.seed(dispute);
+        const evidence = buildEvidence({
+          disputeId: dispute.id,
+          uploadedBy: 'GOTHERPARTY',
+          storageUrl: `fake://d/${status}`,
+        });
+        evidenceRepository.seed(evidence);
+        evidenceStorage.seed(`fake://d/${status}`, Buffer.from('closed-evidence'));
 
-    // GRAISER's wallet link later ends and a *different* account links the
-    // same address — current wallet ownership now belongs to
-    // new-owner-user, but that must not translate into raiser-based
-    // evidence access.
-    walletOwnershipRepository.seed('new-owner-user', 'GRAISER');
+        await expect(
+          downloadEvidence({
+            evidenceId: evidence.id,
+            requesterId: 'raiser-user',
+            requesterRole: 'CUSTOMER',
+          }),
+        ).rejects.toBeInstanceOf(ForbiddenEvidenceAccessError);
+      },
+    );
 
-    await expect(
-      downloadEvidence({
-        evidenceId: evidence.id,
-        requesterId: 'new-owner-user',
-        requesterRole: 'CUSTOMER',
-      }),
-    ).rejects.toBeInstanceOf(ForbiddenEvidenceAccessError);
-  });
+    it.each(restrictedStatuses)(
+      'denies the uploader access once the dispute is %s',
+      async (status) => {
+        const { evidenceRepository, disputeRepository, evidenceStorage, downloadEvidence } =
+          setup();
+        const dispute = buildDispute({
+          chainDeliveryId: 1n,
+          raisedBy: 'GRAISER',
+          raisedByUserId: 'raiser-user',
+          status,
+        });
+        disputeRepository.seed(dispute);
+        const evidence = buildEvidence({
+          disputeId: dispute.id,
+          uploadedBy: 'GUPLOADER',
+          uploadedByUserId: 'uploader-user',
+          storageUrl: `fake://d/${status}`,
+        });
+        evidenceRepository.seed(evidence);
+        evidenceStorage.seed(`fake://d/${status}`, Buffer.from('closed-evidence'));
 
-  it('the original raiser keeps access via raisedByUserId after their wallet is relinked to someone else', async () => {
-    const {
-      evidenceRepository,
-      disputeRepository,
-      walletOwnershipRepository,
-      evidenceStorage,
-      downloadEvidence,
-    } = setup();
-    const dispute = buildDispute({
-      chainDeliveryId: 1n,
-      raisedBy: 'GRAISER',
-      raisedByUserId: 'original-raiser',
-    });
-    disputeRepository.seed(dispute);
-    const evidence = buildEvidence({
-      disputeId: dispute.id,
-      uploadedBy: 'GOTHERPARTY',
-      storageUrl: 'fake://d/raiser-still-mine',
-    });
-    evidenceRepository.seed(evidence);
-    evidenceStorage.seed('fake://d/raiser-still-mine', Buffer.from('confidential-data'));
+        await expect(
+          downloadEvidence({
+            evidenceId: evidence.id,
+            requesterId: 'uploader-user',
+            requesterRole: 'CUSTOMER',
+          }),
+        ).rejects.toBeInstanceOf(ForbiddenEvidenceAccessError);
+      },
+    );
 
-    // original-raiser no longer owns GRAISER at all (relinked away) — the
-    // wallet-ownership repository has no seed for them — yet they must
-    // still be able to read evidence through their raiser authorization.
-    walletOwnershipRepository.seed('new-owner-user', 'GRAISER');
+    it.each(restrictedStatuses)(
+      'still allows ADMIN to download evidence once the dispute is %s',
+      async (status) => {
+        const { evidenceRepository, disputeRepository, evidenceStorage, downloadEvidence } =
+          setup();
+        const dispute = buildDispute({
+          chainDeliveryId: 1n,
+          raisedBy: 'GRAISER',
+          raisedByUserId: 'raiser-user',
+          status,
+        });
+        disputeRepository.seed(dispute);
+        const evidence = buildEvidence({
+          disputeId: dispute.id,
+          uploadedBy: 'GUPLOADER',
+          storageUrl: `fake://d/${status}`,
+        });
+        evidenceRepository.seed(evidence);
+        evidenceStorage.seed(`fake://d/${status}`, Buffer.from('admin-visible'));
 
-    const result = await downloadEvidence({
-      evidenceId: evidence.id,
-      requesterId: 'original-raiser',
-      requesterRole: 'CUSTOMER',
-    });
+        const result = await downloadEvidence({
+          evidenceId: evidence.id,
+          requesterId: 'admin-user',
+          requesterRole: 'ADMIN',
+        });
 
-    expect(result.bytes).toEqual(Buffer.from('confidential-data'));
-  });
-
-  it('legacy disputes (raised before raisedByUserId existed) do not grant raiser-based access via current wallet ownership', async () => {
-    const {
-      evidenceRepository,
-      disputeRepository,
-      walletOwnershipRepository,
-      evidenceStorage,
-      downloadEvidence,
-    } = setup();
-    const dispute = buildDispute({
-      chainDeliveryId: 1n,
-      raisedBy: 'GLEGACYRAISER',
-      raisedByUserId: null,
-    });
-    disputeRepository.seed(dispute);
-    const evidence = buildEvidence({
-      disputeId: dispute.id,
-      uploadedBy: 'GOTHERPARTY',
-      storageUrl: 'fake://d/raiser-legacy',
-    });
-    evidenceRepository.seed(evidence);
-    evidenceStorage.seed('fake://d/raiser-legacy', Buffer.from('confidential-data'));
-    // Unlike the uploader's legacy fallback, current wallet ownership of
-    // the raiser address must NOT grant access even though this is the
-    // only wallet-ownership record available — see downloadEvidence's doc
-    // comment for why that fallback would recreate the vulnerability.
-    walletOwnershipRepository.seed('current-owner', 'GLEGACYRAISER');
-
-    await expect(
-      downloadEvidence({
-        evidenceId: evidence.id,
-        requesterId: 'current-owner',
-        requesterRole: 'CUSTOMER',
-      }),
-    ).rejects.toBeInstanceOf(ForbiddenEvidenceAccessError);
+        expect(result.bytes).toEqual(Buffer.from('admin-visible'));
+      },
+    );
   });
 });

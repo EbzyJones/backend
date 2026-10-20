@@ -81,6 +81,13 @@ function serializeDispute(result: GetDisputeResult) {
   };
 }
 
+/** Upper bound for the raw JSON request body of the evidence upload route.
+ * Base64 inflates the binary payload by ~4/3, so the transport limit must sit
+ * above `evidenceMaxBytes` to leave room for the JSON envelope (contentType,
+ * uploadedBy, etc.). Fastify rejects larger bodies with HTTP 413 before the
+ * full JSON string is buffered into the V8 heap (#393). */
+const EVIDENCE_UPLOAD_BODY_LIMIT = 15 * 1024 * 1024;
+
 export function createDisputeRoutes(
   useCases: DisputeUseCases,
   config: DisputeRoutesConfig,
@@ -102,6 +109,7 @@ export function createDisputeRoutes(
       '/disputes/:chainDeliveryId/evidence',
       {
         preHandler: authenticate,
+        bodyLimit: EVIDENCE_UPLOAD_BODY_LIMIT,
         schema: {
           security: [{ bearerAuth: [] }],
           params: disputeIdParamsSchema,

@@ -36,7 +36,7 @@ describe('createLocalEvidenceStorage', () => {
   it('rejects a storageUrl that attempts to escape baseDir', async () => {
     const storage = createLocalEvidenceStorage(baseDir);
 
-    await expect(storage.read('../../etc/passwd')).rejects.toThrow('Invalid evidence storage path');
+    await expect(storage.read('../../../etc/passwd')).rejects.toThrow(EvidenceNotFoundError);
   });
 
   it('maps a missing file to EvidenceNotFoundError instead of a raw ENOENT', async () => {

@@ -21,6 +21,56 @@ const allowedEvidenceContentTypes = [
 ] as const;
 const allowedEvidenceContentType = z.enum(allowedEvidenceContentTypes);
 
+export type EvidenceContentType = (typeof allowedEvidenceContentTypes)[number];
+
+/**
+ * Magic-byte signatures for each allowed evidence content type. Each entry
+ * lists one or more candidate signatures; a file matches the declared type
+ * when its header starts with any of them. Signatures are compared against
+ * the first 16 bytes of the decoded payload.
+ */
+const evidenceMagicBytes: Record<EvidenceContentType, readonly (readonly number[])[]> = {
+  'image/jpeg': [[0xff, 0xd8, 0xff]],
+  'image/png': [[0x89, 0x50, 0x4e, 0x47]],
+  'image/webp': [[0x52, 0x49, 0x46, 0x46]], // RIFF....WEBP
+  'application/pdf': [[0x25, 0x50, 0x44, 0x46]], // %PDF
+  'audio/mpeg': [
+    [0x49, 0x44, 0x33], // ID3
+    [0xff, 0xfb],
+    [0xff, 0xf3],
+    [0xff, 0xf2],
+  ],
+  'video/mp4': [[0x66, 0x74, 0x79, 0x70]], // ftyp (checked at offset 4 below)
+};
+
+const MAGIC_BYTE_WINDOW = 16;
+
+function matchesSignature(header: Uint8Array, signature: readonly number[]): boolean {
+  if (header.length < signature.length) return false;
+  for (let i = 0; i < signature.length; i += 1) {
+    if (header[i] !== signature[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Verifies that the decoded file header matches the declared content type.
+ * Returns true when the magic bytes are consistent with `contentType`.
+ * MP4 stores its `ftyp` box at offset 4, so that signature is checked there.
+ */
+export function matchesEvidenceMagicBytes(
+  bytes: Uint8Array,
+  contentType: EvidenceContentType,
+): boolean {
+  const header = bytes.subarray(0, MAGIC_BYTE_WINDOW);
+  if (contentType === 'video/mp4') {
+    return matchesSignature(header.subarray(4), [0x66, 0x74, 0x79, 0x70]);
+  }
+  return evidenceMagicBytes[contentType].some((signature) =>
+    matchesSignature(header, signature),
+  );
+}
+
 /**
  * Upper bound on the base64-encoded evidence payload accepted by the API.
  * 10 MiB of raw bytes expands to ~13.98 MiB when base64-encoded (4/3
@@ -30,7 +80,18 @@ const allowedEvidenceContentType = z.enum(allowedEvidenceContentTypes);
  * memory or overflow the evidence storage column before the decoded-size
  * check ever runs.
  */
-const MAX_BASE64_CONTENT_LENGTH = 14 * 1024 * 1024;
+export const MAX_BASE64_CONTENT_LENGTH = 14 * 1024 * 1024;
+
+/**
+ * Transport-level body limit for the evidence upload route. The JSON body
+ * wraps the base64 string in an envelope (uploadedBy, contentType, JSON
+ * quoting/escaping), so the raw request body is slightly larger than the
+ * base64 string itself. This leaves headroom above
+ * MAX_BASE64_CONTENT_LENGTH so that a payload within the schema limit is not
+ * rejected by Fastify, while anything larger is refused with HTTP 413 before
+ * the full JSON body is buffered into memory.
+ */
+export const EVIDENCE_UPLOAD_BODY_LIMIT = 15 * 1024 * 1024;
 
 const evidenceDto = z.object({
   id: z.string().uuid(),
