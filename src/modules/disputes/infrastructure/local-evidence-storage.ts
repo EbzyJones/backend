@@ -1,58 +1,57 @@
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import type { EvidenceStorage } from '../domain/index.js';
-import { EvidenceNotFoundError } from '../domain/index.js';
+import type { EvidenceStorage } from '../domain/ports';
 
-function isEnoentError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+export interface LocalEvidenceStorageOptions {
+  baseDir: string;
 }
 
-/**
- * Local-filesystem-backed `EvidenceStorage` for v1 (ROADMAP.md §2 objective
- * 5 calls for "object storage" without mandating a specific backend, and no
- * S3-compatible client is a dependency of this project yet). The port
- * (`domain/ports.ts`) is deliberately storage-agnostic so a real
- * S3-compatible adapter can replace this later without any application-layer
- * change — swap what `createDisputesModule` wires up in `disputes/index.ts`.
- *
- * `storageUrl` is an opaque `"<disputeId>/<fileId>"` relative path, not a
- * real URL — `read()` resolves it against `baseDir` and rejects anything
- * that would escape it, since the value round-trips through this backend's
- * own API responses and should be treated as untrusted by the time it comes
- * back in a request.
- */
-export function createLocalEvidenceStorage(baseDir: string): EvidenceStorage {
-  const resolvedBaseDir = path.resolve(baseDir);
+const STORAGE_URL_PREFIX = 'local://evidence/';
+
+export function createLocalEvidenceStorage(options: LocalEvidenceStorageOptions): EvidenceStorage {
+  const baseDir = resolve(options.baseDir);
+
+  function resolveStoragePath(storageUrl: string): string {
+    if (!storageUrl.startsWith(STORAGE_URL_PREFIX)) {
+      throw new Error(`Invalid evidence storage url: ${storageUrl}`);
+    }
+    const relative = storageUrl.slice(STORAGE_URL_PREFIX.length);
+    const absolute = resolve(join(baseDir, relative));
+    if (absolute !== baseDir && !absolute.startsWith(`${baseDir}/`)) {
+      throw new Error(`Evidence storage url escapes base directory: ${storageUrl}`);
+    }
+    return absolute;
+  }
 
   return {
-    async save({ disputeId, bytes }) {
-      const dir = path.join(resolvedBaseDir, disputeId);
-      await mkdir(dir, { recursive: true });
-      const fileId = randomUUID();
-      await writeFile(path.join(dir, fileId), bytes);
-      return { storageUrl: `${disputeId}/${fileId}` };
+    async save(input) {
+      const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const relative = join(input.disputeId, `${randomUUID()}-${safeName}`);
+      const absolute = resolve(join(baseDir, relative));
+      await mkdir(dirname(absolute), { recursive: true });
+      await writeFile(absolute, input.data);
+      return { storageUrl: `${STORAGE_URL_PREFIX}${relative}` };
     },
 
     async read(storageUrl) {
-      const resolved = path.resolve(resolvedBaseDir, storageUrl);
-      if (!resolved.startsWith(resolvedBaseDir + path.sep)) {
-        // A path-traversal attempt is a client-supplied invalid reference,
-        // not a server crash — surface it as a domain 404 (an AppError) so
-        // the global error handler maps it to a clean 4xx instead of 500.
-        throw new EvidenceNotFoundError();
-      }
-      try {
-        return await readFile(resolved);
-      } catch (error) {
-        // A genuinely missing file (deleted out-of-band, or a storageUrl
-        // whose bytes were never persisted — e.g. lost with the container's
-        // writable layer before the evidence-data volume existed) should
-        // surface as a domain 404, not an unmapped 500.
-        if (isEnoentError(error)) {
-          throw new EvidenceNotFoundError();
+      const absolute = resolveStoragePath(storageUrl);
+      return readFile(absolute);
+    },
+
+    async delete(storageUrl) {
+      const absolute = resolveStoragePath(storageUrl);
+      await rm(absolute, { force: true });
+
+      // Remove now-empty dispute directories up to (but not including) the base dir.
+      let current = dirname(absolute);
+      while (current !== baseDir && current.startsWith(`${baseDir}/`)) {
+        try {
+          await rm(current, { recursive: false });
+        } catch {
+          break;
         }
-        throw error;
+        current = dirname(current);
       }
     },
   };
