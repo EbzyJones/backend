@@ -18,7 +18,19 @@ export interface RecordActivityInput {
  */
 export interface ActorActivityRepository {
   record(input: RecordActivityInput): Promise<void>;
-  countSince(address: string, category: ActorActivityCategory, since: Date): Promise<number>;
+  /**
+   * Counts activities for `address`/`category` with `occurredAt >= since`.
+   * When `limit` is provided the count is capped at `limit` (the query
+   * short-circuits once that many rows are found) — callers that only need
+   * to know whether a threshold was reached should pass `threshold + 1` so
+   * high-volume actors don't force a full count of every matching row.
+   */
+  countSince(
+    address: string,
+    category: ActorActivityCategory,
+    since: Date,
+    limit?: number,
+  ): Promise<number>;
   /**
    * Deletes rows with `occurredAt` older than `olderThan`, in batches of at
    * most `batchSize`, returning the total number of rows removed. Used by
@@ -28,4 +40,11 @@ export interface ActorActivityRepository {
    * comment and `FRAUD_ACTIVITY_RETENTION_DAYS` in `shared/config/env.ts`.
    */
   deleteOlderThan(olderThan: Date, batchSize: number): Promise<number>;
+  /**
+   * Purges every row with `occurredAt` older than `cutoff`, returning the
+   * number of rows deleted. Filters solely on `occurredAt` so the purge can
+   * use the `(occurredAt)` index scan rather than a sequential scan — see
+   * issue #406 on unbounded `actor_activities` growth.
+   */
+  deleteOlderThan(cutoff: Date): Promise<number>;
 }

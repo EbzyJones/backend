@@ -366,6 +366,25 @@ describe.skipIf(!dbAvailable)('dispute routes (integration)', () => {
     expect([200, 502]).toContain(response.statusCode);
   });
 
+  it('rejects out-of-range split shares with VALIDATION_ERROR', async () => {
+    const admin = await registerWithWallet('ADMIN');
+    const chainDeliveryId = await seedDispute();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/transactions/build/resolve-dispute-split-funds',
+      headers: { authorization: `Bearer ${admin.accessToken}` },
+      payload: {
+        callerAddress: admin.address,
+        chainDeliveryId: chainDeliveryId.toString(),
+        senderShareBps: 12_000,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<ErrorBody>().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('allows non-admin users to access raise-dispute and add-evidence-hash endpoints', async () => {
     const customer = await registerWithWallet('CUSTOMER');
     const chainDeliveryId = await seedDispute();

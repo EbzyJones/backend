@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { payoutAddressResponseSchema } from './schemas.js';
+import { addDriverToFleetBodySchema, payoutAddressResponseSchema } from './schemas.js';
 
 describe('payoutAddressResponseSchema', () => {
   it('accepts payout addresses up to the maximum address length', () => {
@@ -16,5 +16,34 @@ describe('payoutAddressResponseSchema', () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe('addDriverToFleetBodySchema', () => {
+  const callerAddress = 'G' + 'A'.repeat(55);
+  const driverAddress = 'G' + 'B'.repeat(55);
+
+  it('accepts distinct caller and driver addresses', () => {
+    const result = addDriverToFleetBodySchema.safeParse({
+      callerAddress,
+      chainFleetId: 1,
+      driverAddress,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects when driver address equals caller address', () => {
+    const result = addDriverToFleetBodySchema.safeParse({
+      callerAddress,
+      chainFleetId: 1,
+      driverAddress: callerAddress,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path[0] === 'driverAddress');
+      expect(issue?.message).toBe('Driver address cannot be the same as caller address');
+    }
   });
 });

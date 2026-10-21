@@ -6,9 +6,15 @@ import type {
   RemoveDriverFromFleetTxInput,
   UpdateFleetTreasuryTxInput,
 } from '../domain/index.js';
+import { DriverAlreadyInFleetError } from '../domain/errors.js';
 
 export interface BuildFleetTransactionsDeps {
   transactionBuilder: FleetTransactionBuilder;
+  /** Optional read model used to reject duplicate driver invitations before
+   * building an on-chain transaction. */
+  fleetRepository?: {
+    isDriverActiveInFleet(chainFleetId: string, driverAddress: string): Promise<boolean>;
+  };
 }
 
 /** Five thin delegations to the `FleetTransactionBuilder` port — same
@@ -22,8 +28,18 @@ export function createBuildFleetTransactionsUseCases(deps: BuildFleetTransaction
     buildUpdateFleetTreasuryTransaction: (input: UpdateFleetTreasuryTxInput): Promise<string> =>
       deps.transactionBuilder.buildUpdateFleetTreasury(input),
 
-    buildAddDriverToFleetTransaction: (input: AddDriverToFleetTxInput): Promise<string> =>
-      deps.transactionBuilder.buildAddDriverToFleet(input),
+    buildAddDriverToFleetTransaction: async (input: AddDriverToFleetTxInput): Promise<string> => {
+      if (deps.fleetRepository) {
+        const alreadyActive = await deps.fleetRepository.isDriverActiveInFleet(
+          input.chainFleetId,
+          input.driverAddress,
+        );
+        if (alreadyActive) {
+          throw new DriverAlreadyInFleetError(input.driverAddress, input.chainFleetId);
+        }
+      }
+      return deps.transactionBuilder.buildAddDriverToFleet(input);
+    },
 
     buildAcceptFleetInviteTransaction: (input: AcceptFleetInviteTxInput): Promise<string> =>
       deps.transactionBuilder.buildAcceptFleetInvite(input),

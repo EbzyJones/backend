@@ -109,4 +109,38 @@ describe.skipIf(!dbAvailable)('Prisma fleet repository (integration)', () => {
       removedAt: null,
     });
   });
+
+  it('re-accepting a previously removed driver clears removedAt and reactivates it', async () => {
+    const chainFleetId = nextChainId();
+    await fleetRepository.create({
+      chainFleetId,
+      ownerAddress: 'GOWNER',
+      treasuryAddress: 'GTREASURY',
+    });
+    await fleetRepository.inviteDriver(chainFleetId, 'GDRIVER', new Date('2026-01-01T00:00:00Z'));
+    await fleetRepository.acceptInvite(chainFleetId, 'GDRIVER', new Date('2026-01-02T00:00:00Z'));
+
+    const removedAt = new Date('2026-01-03T00:00:00Z');
+    await fleetRepository.removeDriver(chainFleetId, 'GDRIVER', removedAt);
+    let found = await fleetRepository.findByChainFleetId(chainFleetId);
+    expect(found?.drivers[0]?.removedAt).toEqual(removedAt);
+
+    const reacceptedAt = new Date('2026-02-01T00:00:00Z');
+    await fleetRepository.acceptInvite(chainFleetId, 'GDRIVER', reacceptedAt);
+
+    found = await fleetRepository.findByChainFleetId(chainFleetId);
+    expect(found?.drivers).toHaveLength(1);
+    expect(found?.drivers[0]).toMatchObject({
+      status: 'ACTIVE',
+      acceptedAt: reacceptedAt,
+      removedAt: null,
+    });
+    expect(found?.totalActiveDrivers).toBe(1);
+
+    const activeOnly = await fleetRepository.findByChainFleetId(chainFleetId, {
+      includeRemoved: false,
+    });
+    expect(activeOnly?.drivers).toHaveLength(1);
+    expect(activeOnly?.drivers[0]).toMatchObject({ driverAddress: 'GDRIVER', status: 'ACTIVE' });
+  });
 });
