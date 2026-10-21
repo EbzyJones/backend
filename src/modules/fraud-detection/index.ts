@@ -13,6 +13,7 @@ import {
   subscribeFraudDetectionEventDispatch,
 } from './infrastructure/index.js';
 import { createFraudDetectionRoutes } from './interface/routes.js';
+import { env } from '../../shared/config/env.js';
 
 /**
  * Unlike `notifications`, this module writes synchronously in its event
@@ -36,6 +37,7 @@ export function createFraudDetectionModule(prisma: PrismaClient): FastifyPluginA
     assessActor: createAssessActorUseCase({
       activityRepository,
       clock: createLedgerClock(prisma),
+      ruleDefinitions: env.fraudRules,
     }),
   };
 

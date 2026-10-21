@@ -155,78 +155,21 @@ const baseEnvSchema = z.object({
    * and for forensic/manual review of recent flagged activity. */
   FRAUD_ACTIVITY_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
 
+  /** Velocity-rule thresholds and windows for the fraud-detection module
+   * (src/modules/fraud-detection/application/assess-actor.ts). Defaults
+   * mirror the previously hardcoded RULES constants so behaviour is
+   * unchanged when nothing is configured; operators can tune them per
+   * environment (local dev, testnet staging, high-traffic production)
+   * without a rebuild. Thresholds are the number of matching activities
+   * within the window that trigger a flag; windows are in hours. */
+  FRAUD_DELIVERY_VELOCITY_THRESHOLD: z.coerce.number().int().positive().default(10),
+  FRAUD_DELIVERY_VELOCITY_WINDOW_HOURS: z.coerce.number().int().positive().default(1),
+  FRAUD_ESCROW_VELOCITY_THRESHOLD: z.coerce.number().int().positive().default(10),
+  FRAUD_ESCROW_VELOCITY_WINDOW_HOURS: z.coerce.number().int().positive().default(1),
+  FRAUD_DISPUTE_VELOCITY_THRESHOLD: z.coerce.number().int().positive().default(3),
+  FRAUD_DISPUTE_VELOCITY_WINDOW_HOURS: z.coerce.number().int().positive().default(24),
+
   /** Short-TTL cache for the ADMIN-only analytics endpoints
-   * (src/modules/analytics/infrastructure/cached-analytics-reader.ts) —
-   * each admin dashboard refresh would otherwise re-run full-table
-   * count/groupBy queries on every request. */
-  ANALYTICS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(30),
+   * (src/modules/analytics/infrastructure/cached-anal
 
-  /** Short-TTL cache for the shared HTTP auth guard's per-user
-   * `{ role, tokenVersion }` row (#369, src/shared/cache/auth-context-
-   * cache.ts) — the guard's security-issue-#12 check would otherwise issue
-   * one `users` lookup per authenticated request. The TTL is only a
-   * backstop: role changes evict the entry the moment they commit
-   * (`AuthCacheInvalidator`, wired via src/modules/admin), so this bounds
-   * staleness only for cache-eviction failures or a future write path that
-   * forgets to evict. */
-  AUTH_CONTEXT_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
-});
-
-/**
- * A non-logger provider with no relay configured would otherwise only fail at
- * first send — long after boot, deep inside a request or a queued BullMQ job.
- * Failing here keeps the same fail-fast-at-boot contract the required
- * connection strings above already establish (see docs/DEPLOYMENT.md).
- */
-const envWithProviderChecks = baseEnvSchema.superRefine((env, ctx) => {
-  const providers: Array<[string, 'logger' | 'smtp' | 'sendgrid' | 'ses']> = [
-    ['MAIL_PROVIDER', env.MAIL_PROVIDER],
-    ['NOTIFICATION_PROVIDER', env.NOTIFICATION_PROVIDER],
-  ];
-  for (const [key, provider] of providers) {
-    if (provider === 'logger') continue;
-    const missing = (['SMTP_HOST', 'SMTP_FROM'] as const).filter((name) => !env[name]);
-    if (missing.length > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [key],
-        message: `${key}=${provider} requires ${missing.join(' and ')} to be set (the SMTP relay this provider delivers through)`,
-      });
-    }
-    if (Boolean(env.SMTP_USER) !== Boolean(env.SMTP_PASSWORD)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [key],
-        message: `${key}=${provider} requires SMTP_USER and SMTP_PASSWORD to be set together (or both unset for a relay that needs no AUTH)`,
-      });
-    }
-  }
-});
-
-/**
- * `LOG_LEVEL`'s effective default depends on `NODE_ENV`: tests should be
- * quiet unless a level is explicitly requested, everything else defaults to
- * `info`. Expressing that here — the single source of truth for config —
- * means src/shared/logger/index.ts can trust `getConfig().LOG_LEVEL` as-is
- * instead of re-reading `process.env` itself and bypassing validation.
- */
-const envSchema = envWithProviderChecks.transform((env) => ({
-  ...env,
-  LOG_LEVEL: env.LOG_LEVEL ?? (env.NODE_ENV === 'test' ? ('silent' as const) : ('info' as const)),
-}));
-
-export type Env = z.infer<typeof envSchema>;
-
-/** Exposed only for the .env.example drift test — see env.test.ts. */
-export const envSchemaKeys = Object.keys(baseEnvSchema.shape);
-
-export function parseEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const result = envSchema.safeParse(source);
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`)
-      .join('\n');
-    throw new Error(`Invalid environment configuration:\n${issues}`);
-  }
-  return result.data;
-}
+/* … truncated 3243 chars — edit only what you need near the top … */

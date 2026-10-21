@@ -39,7 +39,7 @@ export interface AssessActorInput {
   address: string;
 }
 
-interface RuleDefinition {
+export interface RuleDefinition {
   ruleType: FraudRuleType;
   category: ActorActivityCategory;
   windowHours: number;
@@ -50,10 +50,10 @@ interface RuleDefinition {
  * v1 fixed thresholds, chosen as reasonable defaults rather than tuned
  * against real traffic (none exists yet — no FaniLab contracts are
  * deployed anywhere reachable from this repository, `EVENT_INDEXER.md`).
- * Config-driven/tunable thresholds and ML-based scoring are both
- * documented future work (`ROADMAP.md` §9), not built speculatively here.
+ * These remain the fallback when no `ruleDefinitions` override is supplied;
+ * environment-specific tuning is wired in `../index.ts` via `env.ts`.
  */
-const RULES: RuleDefinition[] = [
+export const RULES: RuleDefinition[] = [
   {
     ruleType: 'DELIVERY_CREATION_VELOCITY',
     category: 'DELIVERY_CREATED',
@@ -76,8 +76,9 @@ const RULES: RuleDefinition[] = [
 
 /**
  * Builds the "assess actor" use case: given an actor's address, it evaluates
- * every fraud rule in {@link RULES} against that actor's recorded activity and
- * returns a fresh {@link ActorAssessment} verdict.
+ * every fraud rule in {@link RULES} (or `deps.ruleDefinitions` when supplied)
+ * against that actor's recorded activity and returns a fresh
+ * {@link ActorAssessment} verdict.
  *
  * Each rule counts the actor's `ActorActivity` entries of a given category
  * within a rolling time window (measured against `deps.clock`, defaulting to
@@ -112,11 +113,12 @@ const RULES: RuleDefinition[] = [
  */
 export function createAssessActorUseCase(deps: AssessActorDeps) {
   const clock = deps.clock ?? systemClock;
+  const rules = deps.ruleDefinitions ?? RULES;
 
   return async function assessActor(input: AssessActorInput): Promise<ActorAssessment> {
     const now = (await clock.now()).getTime();
     const signals = await Promise.all(
-      RULES.map(async (rule) => {
+      rules.map(async (rule) => {
         const since = new Date(now - rule.windowHours * 60 * 60 * 1000);
         const count = await deps.activityRepository.countSince(
           input.address,

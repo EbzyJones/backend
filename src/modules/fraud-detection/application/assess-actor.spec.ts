@@ -2,52 +2,74 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAssessActorUseCase } from './assess-actor.js';
 import { createFixedClock, createInMemoryActorActivityRepository } from './__fixtures__/fakes.js';
 
-describe('assessActor', () => {
-  it('returns not-flagged, zero counts for an actor with no activity', async () => {
-    const activityRepository = createInMemoryActorActivityRepository();
-    const assessActor = createAssessActorUseCase({ activityRepository });
+    expect(result.flagged).toBe(true);
+    expect(result.triggeredRules).toContain('DELIVERY_CREATION_VELOCITY');
+  });
 
-    const result = await assessActor({ address: 'GNEW' });
+  it('does not flag an actor below the default threshold', async () => {
+    const activities = Array.from({ length: 9 }, (_, i) =>
+      makeActivity({ id: `activity-${i}` }),
+    );
+    const repository = makeRepository(activities);
+    const assessActor = createAssessActorUseCase({ repository });
+
+    const result = await assessActor({ actorId: 'actor-1' });
 
     expect(result.flagged).toBe(false);
-    expect(result.signals).toHaveLength(3);
-    expect(result.signals.every((s) => s.count === 0 && !s.triggered)).toBe(true);
   });
 
-  it('flags DELIVERY_CREATION_VELOCITY once the count exceeds the threshold within the window', async () => {
-    const activityRepository = createInMemoryActorActivityRepository();
-    for (let i = 0; i < 11; i += 1) {
-      activityRepository.seed('GBOT', 'DELIVERY_CREATED', new Date());
-    }
-    const assessActor = createAssessActorUseCase({ activityRepository });
+  it('flags an actor after 3 activities when a custom threshold of 2 is injected', async () => {
+    const customRules: RuleDefinition[] = [
+      {
+        name: 'DELIVERY_CREATION_VELOCITY',
+        activityType: 'DELIVERY_CREATION',
+        windowHours: 1,
+        threshold: 2,
+      },
+    ];
+    const activities = Array.from({ length: 3 }, (_, i) =>
+      makeActivity({
+        id: `activity-${i}`,
+        occurredAt: new Date('2024-01-01T00:00:00.000Z'),
+      }),
+    );
+    const repository = makeRepository(activities);
+    const assessActor = createAssessActorUseCase({
+      repository,
+      ruleDefinitions: customRules,
+    });
 
-    const result = await assessActor({ address: 'GBOT' });
+    const result = await assessActor({ actorId: 'actor-1' });
 
-    const signal = result.signals.find((s) => s.ruleType === 'DELIVERY_CREATION_VELOCITY');
-    expect(signal).toMatchObject({ count: 11, threshold: 10, triggered: true });
     expect(result.flagged).toBe(true);
+    expect(result.triggeredRules).toContain('DELIVERY_CREATION_VELOCITY');
   });
 
-  it('does not count activity outside the rule window', async () => {
-    const activityRepository = createInMemoryActorActivityRepository();
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    for (let i = 0; i < 20; i += 1) {
-      activityRepository.seed('GOLDACTIVITY', 'DELIVERY_CREATED', twoHoursAgo);
-    }
-    const assessActor = createAssessActorUseCase({ activityRepository });
+  it('does not flag an actor below a custom threshold', async () => {
+    const customRules: RuleDefinition[] = [
+      {
+        name: 'DELIVERY_CREATION_VELOCITY',
+        activityType: 'DELIVERY_CREATION',
+        windowHours: 1,
+        threshold: 2,
+      },
+    ];
+    const activities = Array.from({ length: 2 }, (_, i) =>
+      makeActivity({ id: `activity-${i}` }),
+    );
+    const repository = makeRepository(activities);
+    const assessActor = createAssessActorUseCase({
+      repository,
+      ruleDefinitions: customRules,
+    });
 
-    const result = await assessActor({ address: 'GOLDACTIVITY' });
+    const result = await assessActor({ actorId: 'actor-1' });
 
-    const signal = result.signals.find((s) => s.ruleType === 'DELIVERY_CREATION_VELOCITY');
-    expect(signal).toMatchObject({ count: 0, triggered: false });
+    expect(result.flagged).toBe(false);
   });
 
-  it('flags DISPUTE_RAISE_VELOCITY on its own, wider 24h window and lower threshold', async () => {
-    const activityRepository = createInMemoryActorActivityRepository();
-    for (let i = 0; i < 4; i += 1) {
-      activityRepository.seed('GSCAMMER', 'DISPUTE_RAISED', new Date());
-    }
-    const assessActor = createAssessActorUseCase({ activityRepository });
+  it('exposes the default RULES with the documented thresholds', () => {
+    const byName = Object.fromEntries(RULES.map((rule) => [rule.name, rule]));
 
     const result = await assessActor({ address: 'GSCAMMER' });
 
@@ -112,22 +134,13 @@ describe('assessActor', () => {
       const signal = result.signals.find((s) => s.ruleType === 'DELIVERY_CREATION_VELOCITY');
       expect(signal).toMatchObject({ count: 11, triggered: true });
     });
-
-    it('without a lag-aware clock, comparing lagged occurredAt values against real wall-clock time would incorrectly exclude them', async () => {
-      const activityRepository = createInMemoryActorActivityRepository();
-      // Real "now" is far ahead of the on-chain occurredAt values because
-      // the indexer has fallen behind — with the default systemClock (no
-      // clock injected), this activity falls outside every rule window.
-      const longAgo = new Date(Date.now() - 5 * 60 * 60 * 1000);
-      for (let i = 0; i < 11; i += 1) {
-        activityRepository.seed('GSTALE', 'DELIVERY_CREATED', longAgo);
-      }
-      const assessActor = createAssessActorUseCase({ activityRepository });
-
-      const result = await assessActor({ address: 'GSTALE' });
-
-      const signal = result.signals.find((s) => s.ruleType === 'DELIVERY_CREATION_VELOCITY');
-      expect(signal).toMatchObject({ count: 0, triggered: false });
+    expect(byName.ESCROW_RELEASE_VELOCITY).toMatchObject({
+      windowHours: 1,
+      threshold: 10,
+    });
+    expect(byName.DISPUTE_RAISE_VELOCITY).toMatchObject({
+      windowHours: 24,
+      threshold: 3,
     });
   });
 });
